@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Kantin QR Uygulaması</title>
+<!-- Önce yerel dosyayı dener (internetsiz çalışır), bulamazsa internetten yükler -->
+<script src="./html5-qrcode.min.js"></script>
+<script>
+  if (typeof Html5Qrcode === 'undefined') {
+    document.write('<script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"><\/script>');
+  }
+</script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; -webkit-tap-highlight-color: transparent; }
+  body { background: #f0f2f5; padding: 15px; padding-top: env(safe-area-inset-top); }
+  .container { max-width: 500px; margin: 0 auto; }
+  h1 { text-align: center; color: #1a3c6e; margin-bottom: 15px; font-size: 22px; }
+  .tab-bar { display: flex; gap: 8px; margin-bottom: 15px; }
+  .tab { flex: 1; padding: 12px; border: none; border-radius: 8px; font-size: 15px; font-weight: bold; cursor: pointer; background: #d9dee5; color: #333; }
+  .tab.active { background: #1a3c6e; color: white; }
+  .card { background: white; border-radius: 10px; padding: 15px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); margin-bottom: 15px; }
+  .card h2 { font-size: 16px; color: #1a3c6e; margin-bottom: 10px; }
+  label { display: block; font-size: 13px; color: #555; margin: 8px 0 4px; }
+  input { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; }
+  button { width: 100%; padding: 12px; border: none; border-radius: 6px; font-size: 15px; font-weight: bold; cursor: pointer; margin-top: 10px; }
+  .btn-primary { background: #1a3c6e; color: white; }
+  .btn-success { background: #2e7d32; color: white; }
+  .btn-danger { background: #c62828; color: white; }
+  .btn-gray { background: #607d8b; color: white; }
+  #reader-define, #reader-sell { width: 100%; margin-top: 10px; min-height: 10px; }
+  .msg { padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 14px; display: none; }
+  .msg.ok { background: #e8f5e9; color: #2e7d32; display: block; }
+  .msg.err { background: #fdecea; color: #c62828; display: block; }
+  .msg.info { background: #e3f2fd; color: #1565c0; display: block; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th, td { padding: 8px; text-align: left; border-bottom: 1px solid #eee; font-size: 14px; }
+  th { background: #f5f5f5; }
+  .total { font-size: 20px; font-weight: bold; color: #1a3c6e; text-align: right; margin-top: 10px; }
+  .remove { background: #c62828; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+  .hidden { display: none; }
+  .product-list { max-height: 300px; overflow-y: auto; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🏪 Kantin QR Uygulaması</h1>
+
+  <div class="tab-bar">
+    <button class="tab active" id="tabDefine" onclick="showTab('define')">QR Tanımla</button>
+    <button class="tab" id="tabSell" onclick="showTab('sell')">Satış</button>
+    <button class="tab" id="tabList" onclick="showTab('list')">Ürünler</button>
+  </div>
+
+  <div id="panel-define">
+    <div class="card">
+      <h2>📷 Yeni Ürün Tanımla</h2>
+      <p style="font-size:13px;color:#777;">QR kodu okutun, ardından ürün adı ve fiyatını girin.</p>
+      <div id="reader-define"></div>
+      <button class="btn-primary" onclick="startDefineScan()">QR Okut</button>
+      <button class="btn-gray hidden" id="stopDefineBtn" onclick="stopDefineScan()">Taramayı Durdur</button>
+      <div id="defineMsg" class="msg"></div>
+      <div id="defineForm" class="hidden">
+        <label>Ürün Adı</label>
+        <input type="text" id="newName" placeholder="Örn: Tost">
+        <label>Fiyat (₺)</label>
+        <input type="number" id="newPrice" placeholder="Örn: 25" step="0.01" min="0">
+        <button class="btn-success" onclick="saveProduct()">Ürünü Kaydet</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="panel-sell" class="hidden">
+    <div class="card">
+      <h2>🛒 Satış Yap</h2>
+      <p style="font-size:13px;color:#777;">Ürünün QR kodunu okutun, sepete eklenecektir.</p>
+      <div id="reader-sell"></div>
+      <button class="btn-primary" onclick="startSellScan()">QR Okut</button>
+      <button class="btn-gray hidden" id="stopSellBtn" onclick="stopSellScan()">Taramayı Durdur</button>
+      <div id="sellMsg" class="msg"></div>
+    </div>
+    <div class="card">
+      <h2>🧾 Sepet</h2>
+      <table id="cartTable">
+        <thead><tr><th>Ürün</th><th>Fiyat</th><th></th></tr></thead>
+        <tbody id="cartBody"></tbody>
+      </table>
+      <div class="total" id="cartTotal">Toplam: 0,00 ₺</div>
+      <button class="btn-danger" onclick="clearCart()">Sepeti Temizle</button>
+    </div>
+  </div>
+
+  <div id="panel-list" class="hidden">
+    <div class="card">
+      <h2>📋 Tanımlı Ürünler</h2>
+      <div class="product-list" id="productList"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== Veri Yönetimi (localStorage) =====
+let products = JSON.parse(localStorage.getItem('kantin_products') || '{}');
+let cart = [];
+
+function saveProducts() {
+  localStorage.setItem('kantin_products', JSON.stringify(products));
+}
+
+// ===== Sekme Yönetimi =====
+function showTab(tab) {
+  document.getElementById('panel-define').classList.toggle('hidden', tab !== 'define');
+  document.getElementById('panel-sell').classList.toggle('hidden', tab !== 'sell');
+  document.getElementById('panel-list').classList.toggle('hidden', tab !== 'list');
+  document.getElementById('tabDefine').classList.toggle('active', tab === 'define');
+  document.getElementById('tabSell').classList.toggle('active', tab === 'sell');
+  document.getElementById('tabList').classList.toggle('active', tab === 'list');
+  if (tab === 'list') renderProductList();
+  stopAllScans();
+}
+
+// ===== QR Tarama =====
+let html5QrCode = null;
+let currentMode = null;
+let lastScanText = null;
+let lastScanTime = 0;
+
+function startScan(mode) {
+  stopAllScans();
+
+  // Kontrol 1: QR kütüphanesi yüklendi mi?
+  if (typeof Html5Qrcode === 'undefined') {
+    showMsg(mode, 'QR kütüphanesi yüklenemedi. İnternet bağlantınızı kontrol edin veya html5-qrcode.min.js dosyasını app klasörüne koyup projeyi yeniden derleyin (README bakınız).', 'err', 8000);
+    return;
+  }
+
+  // Kontrol 2: Kamera API'si bu ortamda çalışır mı? (file:// ve düz http:// çalışmaz!)
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    showMsg(mode, 'Kamera bu ortamda açılamaz. Uygulamayı APK olarak kurun (önerilen) veya sayfayı https:// adresinden açın. Dosyaya çift tıklayarak açmak (file://) kamerayı engeller.', 'err', 8000);
+    return;
+  }
+
+  currentMode = mode;
+  const readerId = mode === 'define' ? 'reader-define' : 'reader-sell';
+  const stopBtn = mode === 'define' ? 'stopDefineBtn' : 'stopSellBtn';
+  document.getElementById(stopBtn).classList.remove('hidden');
+  showMsg(mode, 'Kamera başlatılıyor, kameraya izin vermeniz istenebilir...', 'info');
+
+  html5QrCode = new Html5Qrcode(readerId);
+  html5QrCode.start(
+    { facingMode: "environment" },
+    { fps: 10, qrbox: { width: 250, height: 250 }, rememberLastUsedCamera: true },
+    (decodedText) => {
+      // Aynı kodun milisaniyeler içinde tekrar okunmasını engelle
+      const now = Date.now();
+      if (decodedText === lastScanText && now - lastScanTime < 2000) return;
+      lastScanText = decodedText;
+      lastScanTime = now;
+
+      if (mode === 'define') {
+        onDefineScan(decodedText);
+      } else {
+        onSellScan(decodedText);
+      }
+    },
+    () => {}
+  ).then(() => {
+    showMsg(mode, 'Kamera açıldı. QR kodu çerçeveye hizalayın.', 'info');
+  }).catch(err => {
+    document.getElementById(stopBtn).classList.add('hidden');
+    let errText = String(err);
+    if (errText.toLowerCase().includes('permission') || errText.toLowerCase().includes('denied')) {
+      showMsg(mode, 'Kamera izni reddedildi. Ayarlar > Uygulamalar > Kantin QR > İzinler > Kamera > İzin Ver, sonra tekrar deneyin.', 'err', 8000);
+    } else if (errText.toLowerCase().includes('notreadable') || errText.toLowerCase().includes('notfound')) {
+      showMsg(mode, 'Kamera bulunamadı veya başka bir uygulama tarafından kullanılıyor. Diğer uygulamaları kapatıp tekrar deneyin.', 'err', 8000);
+    } else {
+      showMsg(mode, 'Kamera başlatılamadı: ' + errText, 'err', 8000);
+    }
+  });
+}
+
+function stopAllScans() {
+  if (html5QrCode) {
+    try { html5QrCode.stop().then(() => html5QrCode.clear()).catch(() => {}); } catch(e) {}
+    html5QrCode = null;
+  }
+  lastScanText = null;
+  document.getElementById('stopDefineBtn').classList.add('hidden');
+  document.getElementById('stopSellBtn').classList.add('hidden');
+}
+
+function startDefineScan() { startScan('define'); }
+function startSellScan() { startScan('sell'); }
+function stopDefineScan() { stopAllScans(); }
+function stopSellScan() { stopAllScans(); }
+
+// ===== QR Tanımlama =====
+function onDefineScan(qrText) {
+  stopAllScans();
+  if (products[qrText]) {
+    showMsg('define', 'Bu QR zaten tanımlı: ' + products[qrText].name, 'err');
+    return;
+  }
+  window.pendingQr = qrText;
+  document.getElementById('defineForm').classList.remove('hidden');
+  document.getElementById('newName').value = '';
+  document.getElementById('newPrice').value = '';
+  showMsg('define', 'QR okundu. Ürün adı ve fiyatını girin.', 'ok');
+}
+
+function saveProduct() {
+  const name = document.getElementById('newName').value.trim();
+  const price = parseFloat(document.getElementById('newPrice').value);
+  if (!window.pendingQr) { showMsg('define', 'Önce QR okutun.', 'err'); return; }
+  if (!name) { showMsg('define', 'Ürün adı girin.', 'err'); return; }
+  if (isNaN(price) || price < 0) { showMsg('define', 'Geçerli fiyat girin.', 'err'); return; }
+
+  products[window.pendingQr] = { name: name, price: price };
+  saveProducts();
+  document.getElementById('defineForm').classList.add('hidden');
+  window.pendingQr = null;
+  showMsg('define', '✅ "' + name + '" başarıyla tanımlandı!', 'ok');
+}
+
+// ===== Satış =====
+function onSellScan(qrText) {
+  const product = products[qrText];
+  if (!product) {
+    showMsg('sell', 'Bu QR tanımlı değil! Önce "QR Tanımla" sekmesinden tanımlayın.', 'err');
+    stopAllScans(); // tanımsız kodda da taramayı durdur, tekrar "QR Okut" gereksin
+    return;
+  }
+  // ✅ ÖNERİ 2: Aynı ürün bir önceki okutmadan hemen sonra tekrar okutulursa uyar
+  if (cart.length > 0 && cart[cart.length - 1].name === product.name && cart[cart.length - 1].price === product.price) {
+    showMsg('sell', '⚠️ "' + product.name + '" az önce eklendi. Yanlışlıkla çift ekleme yapılmadı.', 'info');
+    stopAllScans();
+    return;
+  }
+  cart.push(product);
+  renderCart();
+  stopAllScans(); // ✅ ÖNERİ 3: ürün eklenince tarama otomatik durur
+  showMsg('sell', '✅ "' + product.name + '" sepete eklendi. Yeni ürün için "QR Okut" düğmesine basın.', 'ok');
+}
+
+function renderCart() {
+  const body = document.getElementById('cartBody');
+  body.innerHTML = '';
+  let total = 0;
+  cart.forEach((item, idx) => {
+    total += item.price;
+    const row = document.createElement('tr');
+    const nameTd = document.createElement('td');
+    nameTd.textContent = item.name;
+    const priceTd = document.createElement('td');
+    priceTd.textContent = item.price.toFixed(2) + ' ₺';
+    const btnTd = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.className = 'remove';
+    btn.textContent = '✕';
+    btn.onclick = () => removeFromCart(idx);
+    btnTd.appendChild(btn);
+    row.appendChild(nameTd);
+    row.appendChild(priceTd);
+    row.appendChild(btnTd);
+    body.appendChild(row);
+  });
+  document.getElementById('cartTotal').textContent = 'Toplam: ' + total.toFixed(2) + ' ₺';
+}
+
+function removeFromCart(idx) {
+  cart.splice(idx, 1);
+  renderCart();
+}
+
+function clearCart() {
+  cart = [];
+  renderCart();
+}
+
+// ===== Ürün Listesi =====
+function renderProductList() {
+  const list = document.getElementById('productList');
+  const keys = Object.keys(products);
+  if (keys.length === 0) {
+    list.innerHTML = '<p style="color:#777;">Henüz ürün tanımlanmadı.</p>';
+    return;
+  }
+  const table = document.createElement('table');
+  table.innerHTML = '<thead><tr><th>Ürün</th><th>Fiyat</th><th></th></tr></thead>';
+  const tbody = document.createElement('tbody');
+  keys.forEach(key => {
+    const p = products[key];
+    const tr = document.createElement('tr');
+    const n = document.createElement('td'); n.textContent = p.name;
+    const f = document.createElement('td'); f.textContent = p.price.toFixed(2) + ' ₺';
+    const d = document.createElement('td');
+    const btn = document.createElement('button');
+    btn.className = 'remove';
+    btn.textContent = 'Sil';
+    btn.onclick = () => deleteProduct(key);
+    d.appendChild(btn);
+    tr.appendChild(n); tr.appendChild(f); tr.appendChild(d);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  list.innerHTML = '';
+  list.appendChild(table);
+}
+
+function deleteProduct(key) {
+  if (confirm('Bu ürünü silmek istediğinize emin misiniz?')) {
+    delete products[key];
+    saveProducts();
+    renderProductList();
+  }
+}
+
+// ===== Yardımcı =====
+let msgTimers = {};
+function showMsg(mode, text, type, duration) {
+  const id = mode === 'define' ? 'defineMsg' : 'sellMsg';
+  const el = document.getElementById(id);
+  el.className = 'msg ' + type;
+  el.textContent = text;
+  if (msgTimers[mode]) clearTimeout(msgTimers[mode]);
+  msgTimers[mode] = setTimeout(() => { el.className = 'msg'; }, duration || 4000);
+}
+
+renderCart();
+</script>
+</body>
+</html>
