@@ -1,0 +1,1186 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#1a3c6e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" id="pwaManifest">
+<title>Kantin Satış</title>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: Arial, sans-serif; -webkit-tap-highlight-color: transparent; }
+  body { background: #f0f2f5; padding: 15px; padding-top: calc(15px + env(safe-area-inset-top)); padding-bottom: calc(15px + env(safe-area-inset-bottom)); }
+  body.dark { background: #12161d; color: #dfe5ee; }
+  .container { max-width: 500px; margin: 0 auto; }
+  h1 { text-align: center; color: #1a3c6e; margin-bottom: 15px; font-size: 22px; }
+  body.dark h1 { color: #8fb4ea; }
+  .tab-bar { display: flex; gap: 8px; margin-bottom: 15px; flex-wrap: wrap; }
+  .tab { flex: 1; padding: 12px 2px; border: none; border-radius: 8px; font-size: 14px; font-weight: bold; cursor: pointer; background: #d9dee5; color: #333; margin: 0; }
+  .tab.active { background: #1a3c6e; color: #fff; }
+  body.dark .tab { background: #2a3342; color: #cdd6e4; }
+  body.dark .tab.active { background: #3b6bb3; color: #fff; }
+  .card { background: #fff; border-radius: 10px; padding: 15px; box-shadow: 0 2px 6px rgba(0,0,0,0.1); margin-bottom: 15px; }
+  body.dark .card { background: #1c2330; box-shadow: none; }
+  .card h2 { font-size: 16px; color: #1a3c6e; margin-bottom: 10px; }
+  body.dark .card h2 { color: #8fb4ea; }
+  .hint { font-size: 13px; color: #777; margin-bottom: 6px; }
+  body.dark .hint { color: #93a1b5; }
+  label { display: block; font-size: 13px; color: #555; margin: 10px 0 4px; }
+  body.dark label { color: #9fb0c8; }
+  input { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; }
+  body.dark input, body.dark select, body.dark textarea { background: #232c3b; border-color: #3a465a; color: #e8edf5; }
+  input:focus-visible, button:focus-visible { outline: 3px solid #7aa7e6; outline-offset: 1px; }
+  button { width: 100%; padding: 12px; border: none; border-radius: 6px; font-size: 15px; font-weight: bold; cursor: pointer; margin-top: 10px; }
+  .btn-primary { background: #1a3c6e; color: #fff; }
+  .btn-success { background: #2e7d32; color: #fff; }
+  .btn-danger { background: #c62828; color: #fff; }
+  .btn-gray { background: #607d8b; color: #fff; }
+  .row { display: flex; gap: 8px; }
+  .row input { flex: 1; }
+  .row button { width: auto; margin-top: 0; padding: 10px 18px; }
+  .msg { padding: 10px; border-radius: 6px; margin-top: 10px; font-size: 14px; display: none; }
+  .msg.ok { background: #e8f5e9; color: #2e7d32; display: block; }
+  .msg.err { background: #fdecea; color: #c62828; display: block; }
+  .msg.info { background: #e3f2fd; color: #1565c0; display: block; }
+  body.dark .msg.ok { background: #1d3325; color: #7ddb8a; }
+  body.dark .msg.err { background: #3a1d1d; color: #f08a80; }
+  body.dark .msg.info { background: #1b2c44; color: #7fb2ec; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th, td { padding: 8px 4px; text-align: left; border-bottom: 1px solid #eee; font-size: 14px; vertical-align: middle; }
+  th { background: #f5f5f5; }
+  body.dark th { background: #232c3b; }
+  body.dark td, body.dark th { border-color: #2c3646; }
+  td.num, th.num { text-align: right; white-space: nowrap; }
+  .total { font-size: 22px; font-weight: bold; color: #1a3c6e; text-align: right; margin-top: 12px; }
+  body.dark .total { color: #8fb4ea; }
+  .small { width: auto; margin: 0; padding: 6px 10px; font-size: 13px; border-radius: 4px; }
+  .qty { display: inline-flex; align-items: center; gap: 6px; }
+  .qty button { width: 30px; height: 30px; padding: 0; margin: 0; background: #d9dee5; color: #1a3c6e; font-size: 18px; line-height: 1; }
+  .qty button.wide { width: 40px; font-size: 13px; }
+  .qty span { min-width: 18px; text-align: center; font-weight: bold; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; max-height: 340px; overflow-y: auto; }
+  .prod { background: #eef3fb; color: #1a3c6e; border: 1px solid #c9d7ee; margin: 0; padding: 12px 8px; text-align: center; font-weight: normal; }
+  body.dark .prod { background: #253247; border-color: #3a4a66; color: #cfe0f7; }
+  .prod b { display: block; font-size: 15px; margin-bottom: 4px; word-break: break-word; }
+  .prod:active { background: #d6e3f7; }
+  .empty { color: #777; font-size: 14px; padding: 10px 0; }
+  body.dark .empty { color: #8a97ab; }
+  .prod .stock { display: block; font-size: 12px; color: #5b6b82; margin-top: 3px; }
+  .prod.out { background: #f4f4f4; border-color: #ddd; color: #888; }
+  body.dark .prod.out { background: #20242c; color: #7c8698; }
+  .prod.out .stock { color: #c62828; }
+  .warn { color: #c62828; font-size: 12px; display: block; }
+  select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 16px; background: #fff; }
+  .row select { width: auto; }
+  textarea { font-family: Arial, sans-serif; }
+  .cin { width: 78px; text-align: center; padding: 8px; }
+  .diff { font-weight: bold; white-space: nowrap; }
+  .diff.ok { color: #2e7d32; } .diff.bad { color: #c62828; }
+  td.lbl { color: #555; }
+  body.dark td.lbl { color: #9fb0c8; }
+  tr.strong td { font-weight: bold; color: #1a3c6e; }
+  body.dark tr.strong td { color: #8fb4ea; }
+  .hidden { display: none !important; }
+  .tab-bar .tab { flex: 1 1 21%; }
+  .btn-wa { display: block; text-align: center; text-decoration: none; background: #1f9d55; color: #fff; padding: 12px; border-radius: 6px; font-weight: bold; font-size: 15px; margin-top: 10px; }
+  .msgprev { white-space: pre-wrap; background: #f4f6f9; border-radius: 8px; padding: 10px; font-size: 13px; margin: 8px 0; word-break: break-word; }
+  body.dark .msgprev { background: #232c3b; }
+  textarea.mt { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; font-size: 15px; }
+  .product-list { max-height: 420px; overflow-y: auto; }
+  .code { color: #888; font-size: 12px; word-break: break-all; }
+  body.dark .code { color: #8a97ab; }
+  .actions { white-space: nowrap; text-align: right; }
+  .actions button + button { margin-left: 4px; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+  .chip { border: 1px solid #c9d7ee; background: #eef3fb; color: #1a3c6e; border-radius: 14px; padding: 5px 10px; font-size: 13px; margin: 0; width: auto; font-weight: bold; }
+  .chip.active { background: #1a3c6e; color: #fff; }
+  body.dark .chip { background: #253247; border-color: #3a4a66; color: #cfe0f7; }
+  body.dark .chip.active { background: #3b6bb3; color: #fff; }
+  #recentStrip { display: flex; gap: 6px; overflow-x: auto; margin-top: 6px; padding-bottom: 4px; }
+  #recentStrip .chip { white-space: nowrap; }
+  .change-box { font-size: 18px; font-weight: bold; text-align: right; margin-top: 8px; }
+  .change-box.ok { color: #2e7d32; }
+  .change-box.bad { color: #c62828; }
+  .banner { background: #fff3e0; border: 1px solid #ffe0a3; border-radius: 8px; padding: 10px; font-size: 13px; margin-bottom: 12px; color: #7a5b16; }
+  .banner .row { margin-top: 8px; }
+  body.dark .banner { background: #33261a; color: #e8c88a; border-color: #5a431f; }
+  .modal-wrap { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 50; padding: 15px; }
+  .modal { background: #fff; border-radius: 12px; max-width: 480px; width: 100%; max-height: 85vh; overflow-y: auto; padding: 16px; color: #222; }
+  .modal h3 { color: #1a3c6e; margin-bottom: 8px; }
+  .modal h4 { color: #1a3c6e; }
+  body.dark .modal { background: #1c2330; color: #dfe5ee; }
+  body.dark .modal h3, body.dark .modal h4 { color: #8fb4ea; }
+  #printArea { display: none; }
+  @media print {
+    body.printing > *:not(#printArea) { display: none !important; }
+    body.printing { background: #fff; padding: 0; }
+    #printArea { display: block; font-size: 13px; color: #000; }
+    #printArea h2 { font-size: 17px; margin-bottom: 6px; }
+    #printArea h3 { font-size: 14px; margin: 10px 0 4px; }
+    #printArea table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+    #printArea td, #printArea th { border-bottom: 1px solid #ccc; padding: 4px; text-align: left; }
+    #printArea td.num, #printArea th.num { text-align: right; }
+  }
+  #chartBox { display: flex; align-items: flex-end; gap: 4px; height: 110px; margin-top: 10px; }
+  .barw { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 3px; height: 100%; }
+  .bar { width: 100%; background: #1a3c6e; border-radius: 3px 3px 0 0; margin-top: auto; min-height: 2px; }
+  body.dark .bar { background: #3b6bb3; }
+  .barw span { font-size: 10px; color: #888; }
+  body.dark .barw span { color: #8a97ab; }
+  a.btn-success { text-decoration: none; display: block; text-align: center; }
+
+  /* ===== Auth overlay ===== */
+  #authWrap { position: fixed; inset: 0; background: linear-gradient(135deg,#1a3c6e,#2d5b9e); display: flex; align-items: center; justify-content: center; z-index: 200; padding: 20px; overflow-y: auto; }
+  #authWrap.hidden { display: none; }
+  #authCard { background: #fff; border-radius: 16px; padding: 26px 22px; max-width: 400px; width: 100%; box-shadow: 0 12px 40px rgba(0,0,0,0.3); }
+  body.dark #authCard { background: #1c2330; color: #dfe5ee; }
+  #authCard h2 { color: #1a3c6e; text-align: center; margin-bottom: 4px; font-size: 22px; }
+  body.dark #authCard h2 { color: #8fb4ea; }
+  #authCard p.sub { text-align: center; color: #777; font-size: 13px; margin-bottom: 18px; }
+  body.dark #authCard p.sub { color: #93a1b5; }
+  #authCard input { margin-bottom: 10px; }
+  #authCard .link { text-align: center; font-size: 13px; color: #1a3c6e; cursor: pointer; margin-top: 14px; display: block; }
+  #authCard .link:hover { text-decoration: underline; }
+  body.dark #authCard .link { color: #8fb4ea; }
+  .sync-status { font-size: 12px; padding: 4px 10px; border-radius: 12px; display: inline-block; font-weight: bold; }
+  .sync-ok { background: #e8f5e9; color: #2e7d32; }
+  .sync-wait { background: #fff3e0; color: #b26a00; }
+  .sync-err { background: #fdecea; color: #c62828; }
+  .sync-off { background: #eceff1; color: #607d8b; }
+  body.dark .sync-ok { background: #1d3325; color: #7ddb8a; }
+  body.dark .sync-wait { background: #33261a; color: #e8c88a; }
+  body.dark .sync-err { background: #3a1d1d; color: #f08a80; }
+  body.dark .sync-off { background: #232c3b; color: #9fb0c8; }
+</style>
+</head>
+<body>
+
+<!-- Giriş / Kayıt -->
+<div id="authWrap" class="hidden">
+  <div id="authCard">
+    <h2>🏪 Kantin Satış</h2>
+    <p class="sub" id="authSub">Hesabınıza giriş yapın</p>
+
+    <div id="authLoginView">
+      <input type="email" id="authEmail" placeholder="E-posta" autocomplete="email" autocapitalize="off">
+      <input type="password" id="authPass" placeholder="Şifre" autocomplete="current-password">
+      <div id="authMsg" class="msg"></div>
+      <button class="btn-primary" id="authBtn" onclick="doLogin()">Giriş Yap</button>
+      <a class="link" onclick="showAuthMode('register')">Hesabınız yok mu? Kayıt olun</a>
+      <a class="link" onclick="doForgot()">Şifremi unuttum</a>
+    </div>
+
+    <div id="authRegView" class="hidden">
+      <input type="email" id="regEmail" placeholder="E-posta" autocomplete="email" autocapitalize="off">
+      <input type="password" id="regPass" placeholder="Şifre (en az 6 karakter)" autocomplete="new-password">
+      <input type="password" id="regPass2" placeholder="Şifre tekrar" autocomplete="new-password">
+      <div id="regMsg" class="msg"></div>
+      <button class="btn-success" id="regBtn" onclick="doRegister()">Kayıt Ol</button>
+      <a class="link" onclick="showAuthMode('login')">Zaten hesabınız var mı? Giriş yapın</a>
+    </div>
+  </div>
+</div>
+
+<div class="container hidden" id="mainContainer">
+  <div class="row" style="align-items:center;margin-bottom:10px">
+    <h1 style="flex:1;margin:0;text-align:left">🏪 Kantin Satış</h1>
+    <button id="darkBtn" class="btn-gray small" style="width:auto;margin:0;padding:8px 12px" onclick="toggleDark()">🌙</button>
+  </div>
+
+  <div id="cloudOffBanner" class="banner hidden" style="background:#e3f2fd;border-color:#90caf9;color:#0d47a1">
+    ℹ️ Bulut kapalı: veriler yalnızca bu cihazda saklanıyor. Diğer telefonlardan da erişmek için dosyanın başındaki <b>FIREBASE_CONFIG</b> ayarını yapın (açıklama için sohbete bakın).
+  </div>
+
+  <div id="lowBanner" class="banner hidden">
+    ⚠️ <span id="lowBannerText"></span>
+    <div class="row">
+      <button class="btn-primary small" style="flex:1" onclick="shareLow()">📱 Siparişi Paylaş</button>
+      <button class="btn-gray small" style="flex:1" onclick="dismissLow()">Kapat</button>
+    </div>
+  </div>
+
+  <div id="sktBanner" class="banner hidden">
+    ⏳ <span id="sktBannerText"></span>
+    <div class="row">
+      <button class="btn-primary small" style="flex:1" onclick="showTab('tools')">Tarihlere Git</button>
+      <button class="btn-gray small" style="flex:1" onclick="dismissSkt()">Kapat</button>
+    </div>
+  </div>
+
+  <div class="tab-bar">
+    <button class="tab active" id="tabSell" onclick="showTab('sell')">Satış</button>
+    <button class="tab" id="tabDefine" onclick="showTab('define')">Ekle</button>
+    <button class="tab" id="tabList" onclick="showTab('list')">Ürünler</button>
+    <button class="tab" id="tabCount" onclick="showTab('count')">Sayım</button>
+    <button class="tab" id="tabSummary" onclick="showTab('summary')">Özet</button>
+    <button class="tab" id="tabTools" onclick="showTab('tools')">Araçlar</button>
+    <button class="tab" id="tabMsg" onclick="showTab('msg')">Mesaj</button>
+  </div>
+
+  <!-- SATIŞ -->
+  <div id="panel-sell">
+    <div class="card">
+      <h2>🛒 Ürün Ekle</h2>
+      <div class="row">
+        <button id="modeP1" class="tab active" style="flex:1" onclick="setPriceMode('p1')">Öğrenci</button>
+        <button id="modeP2" class="tab" style="flex:1" onclick="setPriceMode('p2')">Öğretmen</button>
+      </div>
+      <p class="hint" style="margin-top:6px">Ürüne dokunun ya da kodunu yazıp Enter'a basın. USB / Bluetooth barkod okuyucu da çalışır. İki fiyatı tanımlı ürünlerde yukarıdaki seçim geçerlidir.</p>
+      <div class="row">
+        <input type="text" id="codeInput" placeholder="Ürün kodu" autocomplete="off" autocapitalize="off" enterkeyhint="done">
+        <button class="btn-primary" onclick="addByCode()">Ekle</button>
+      </div>
+      <div id="sellMsg" class="msg"></div>
+      <input type="search" id="searchInput" placeholder="Ürün ara" style="margin-top:12px" oninput="renderGrid()" autocomplete="off">
+      <div class="chips" id="catChips"></div>
+      <p class="hint" style="margin-top:8px;margin-bottom:0">🔁 Son satılanlar (dokununca sepete eklenir):</p>
+      <div id="recentStrip"></div>
+      <div class="grid" id="productGrid"></div>
+    </div>
+
+    <div class="card">
+      <h2>🧾 Sepet</h2>
+      <table id="cartTable">
+        <thead><tr><th>Ürün</th><th class="num">Adet</th><th class="num">Tutar</th></tr></thead>
+        <tbody id="cartBody"></tbody>
+      </table>
+      <div class="total" id="cartTotal">Toplam: 0,00 ₺</div>
+      <label for="paidAmt">Alınan para (para üstü için, isteğe bağlı)</label>
+      <div class="row">
+        <input type="text" id="paidAmt" inputmode="decimal" placeholder="Örn: 100" oninput="updateChange()" autocomplete="off">
+        <button class="btn-gray" onclick="document.getElementById('paidAmt').value='';updateChange()">Sil</button>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="btn-primary small" style="flex:1;margin-top:0;padding:10px 4px" onclick="setPaid(50)">50 ₺</button>
+        <button class="btn-primary small" style="flex:1;margin-top:0;padding:10px 4px" onclick="setPaid(100)">100 ₺</button>
+        <button class="btn-primary small" style="flex:1;margin-top:0;padding:10px 4px" onclick="setPaid(200)">200 ₺</button>
+        <button class="btn-primary small" style="flex:1;margin-top:0;padding:10px 4px" onclick="setPaid('exact')">Tutar</button>
+      </div>
+      <div id="changeBox" class="change-box"></div>
+      <button class="btn-success" onclick="completeSale()">Satışı Tamamla</button>
+      <input type="text" id="debtName" list="debtNames" placeholder="Veresiye için kişi adı" style="margin-top:10px" autocomplete="off">
+      <datalist id="debtNames"></datalist>
+      <button class="btn-primary" onclick="completeSale(true)">Veresiyeye Yaz</button>
+      <button class="btn-gray" onclick="undoSale()">Son Satışı Geri Al</button>
+      <button class="btn-danger" onclick="clearCart()">Sepeti Temizle</button>
+      <div id="cartMsg" class="msg"></div>
+    </div>
+  </div>
+
+  <!-- ÜRÜN EKLE -->
+  <div id="panel-define" class="hidden">
+    <div class="card">
+      <h2 id="defineTitle">➕ Yeni Ürün</h2>
+      <label for="newName">Ürün adı</label>
+      <input type="text" id="newName" placeholder="Örn: Tost" autocomplete="off">
+      <label for="newPrice">Fiyat (₺)</label>
+      <input type="text" id="newPrice" inputmode="decimal" placeholder="Örn: 25 veya 12,50" autocomplete="off">
+      <label for="newPrice2">2. fiyat / öğretmen fiyatı (isteğe bağlı)</label>
+      <input type="text" id="newPrice2" inputmode="decimal" placeholder="Örn: 30" autocomplete="off">
+      <label for="newCat">Kategori (isteğe bağlı)</label>
+      <input type="text" id="newCat" list="catList" placeholder="Örn: İçecek" autocomplete="off">
+      <datalist id="catList"><option>İçecek</option><option>Atıştırmalık</option><option>Gofret &amp; Kek</option><option>Şekerleme</option><option>Süt Ürünü</option><option>Diğer</option></datalist>
+      <label for="newStock">Raf stoğu (isteğe bağlı)</label>
+      <input type="text" id="newStock" inputmode="numeric" placeholder="Örn: 24" autocomplete="off">
+      <label for="newCode">Barkod / ürün kodu (isteğe bağlı)</label>
+      <input type="text" id="newCode" placeholder="Boş bırakırsanız otomatik verilir" autocomplete="off" autocapitalize="off">
+      <p class="hint" style="margin-top:6px">Barkod okuyucunuz varsa bu alana tıklayıp ürünü okutun. Mal girişleri "Sayım" sekmesinden depoya eklenir.</p>
+      <button class="btn-success" id="saveBtn" onclick="saveProduct()">Ürünü Kaydet</button>
+      <button class="btn-gray hidden" id="cancelEditBtn" onclick="cancelEdit()">Vazgeç</button>
+      <div id="defineMsg" class="msg"></div>
+    </div>
+  </div>
+
+  <!-- SAYIM -->
+  <div id="panel-count" class="hidden">
+    <div class="card">
+      <h2>📅 Ay Özeti</h2>
+      <p class="hint" id="periodInfo"></p>
+      <table><tbody id="monthBody"></tbody></table>
+    </div>
+    <div class="card">
+      <h2>📦 Mal Girişi (Depoya)</h2>
+      <p class="hint">Aldığınız malı depoya kaydedin; alışveriş tutarı aya eklenir. Depodan rafı "Araçlar &gt; Depodan Rafa Taşı" ile doldurun.</p>
+      <label for="inProduct">Ürün</label>
+      <select id="inProduct" onchange="fillCost()"></select>
+      <div class="row" style="margin-top:8px">
+        <input type="text" id="inQty" inputmode="numeric" placeholder="Adet" autocomplete="off">
+        <input type="text" id="inCost" inputmode="decimal" placeholder="Alış fiyatı ₺" autocomplete="off">
+      </div>
+      <button class="btn-success" onclick="saveIn()">Mal Girişini Kaydet</button>
+      <div id="inMsg" class="msg"></div>
+      <details style="margin-top:14px">
+        <summary style="cursor:pointer;color:#1a3c6e;font-weight:bold">📋 Excel'den toplu mal girişi</summary>
+        <p class="hint" style="margin-top:8px">Excel'de başlık satırıyla birlikte (Barkod, Ürün, Satınalma Fiyatı, Satış Fiyatı, Miktar, Fatura) ilgili satırları kopyalayıp yapıştırın ya da CSV dosyası seçin.</p>
+        <textarea id="xlText" rows="5" placeholder="Buraya yapıştırın" style="width:100%;padding:10px;border:1px solid #ccc;border-radius:6px;font-size:14px"></textarea>
+        <input type="file" id="xlFile" accept=".csv,.tsv,.txt" style="margin-top:8px">
+        <button class="btn-primary" onclick="previewExcelIn()">Önizle</button>
+        <div id="xlMsg" class="msg"></div>
+        <div id="xlPreview"></div>
+        <button class="btn-success hidden" id="xlApply" onclick="applyExcelIn()">Onayla ve Ekle</button>
+      </details>
+      <div id="inList"></div>
+    </div>
+    <div class="card">
+      <h2>🔢 Ay Sonu Sayım</h2>
+      <p class="hint">Barkod okutunca sayılan 1 artar. Ya da adedi kutuya yazın. "Beklenen" elinizde olması gereken adettir.</p>
+      <input type="text" id="countScan" placeholder="Barkod okut / kod yaz, Enter" autocomplete="off" autocapitalize="off">
+      <div id="countMsg" class="msg"></div>
+      <div class="row" style="margin-top:10px">
+        <input type="search" id="countSearch" placeholder="Ürün ara" oninput="renderCountList()" autocomplete="off">
+        <select id="countFilter" onchange="renderCountList()"><option value="all">Hepsi</option><option value="un">Sayılmayanlar</option><option value="diff">Farklı olanlar</option></select>
+      </div>
+      <p class="hint" id="countProgress" style="margin-top:8px"></p>
+      <div class="product-list" id="countList"></div>
+    </div>
+    <div class="card">
+      <h2>🧮 Sayım Sonucu</h2>
+      <table><tbody id="resultBody"></tbody></table>
+      <button class="btn-success" onclick="finishCount()">Sayımı Bitir ve Stokları Güncelle</button>
+      <button class="btn-primary" onclick="exportCount()">Sayımı Excel'e Aktar (CSV)</button>
+      <button class="btn-gray" onclick="resetCount()">Sayımı Sıfırla</button>
+    </div>
+    <div class="card">
+      <h2>🗂️ Geçmiş Sayımlar</h2>
+      <div id="histList"></div>
+    </div>
+  </div>
+
+  <!-- ÖZET -->
+  <div id="panel-summary" class="hidden">
+    <div id="sumMsg" class="msg"></div>
+    <div class="card">
+      <h2>📦 Elimdeki Mal</h2>
+      <table><tbody id="stockBody"></tbody></table>
+      <p class="hint" id="stockOut" style="margin-top:10px"></p>
+      <p class="hint" id="stockLow"></p>
+      <p class="hint" id="stockShelf"></p>
+    </div>
+    <div class="card">
+      <h2>📆 Günlük Özet</h2>
+      <input type="date" id="sumDate" onchange="renderOverview()">
+      <table><tbody id="dayBody"></tbody></table>
+      <div id="dayItems"></div>
+      <h2 style="margin-top:14px">🏷️ Kategori Bazlı Hasılat</h2>
+      <table><tbody id="catBody"></tbody></table>
+      <button class="btn-primary" onclick="zReport()">🖨️ Gün Sonu Raporu (Z)</button>
+    </div>
+    <div class="card">
+      <h2>🧾 Satış Geçmişi</h2>
+      <p class="hint">Seçili günün satışları. Fişi yeniden yazdırabilir ya da satışı/tek kalemi iptal edebilirsiniz.</p>
+      <div id="saleHist"></div>
+    </div>
+    <div class="card">
+      <h2>📒 Veresiye Özeti</h2>
+      <table><tbody id="debtMonthBody"></tbody></table>
+    </div>
+    <div class="card">
+      <h2>🗓️ Son 7 Gün</h2>
+      <div id="weekBox"></div>
+      <h2 style="margin-top:14px">📊 Son 14 Gün Grafiği</h2>
+      <div id="chartBox"></div>
+    </div>
+  </div>
+
+  <!-- ARAÇLAR -->
+  <div id="panel-tools" class="hidden">
+    <div id="toolMsg" class="msg"></div>
+
+    <div class="card">
+      <h2>👤 Hesap ve Eşitleme</h2>
+      <div id="acctBox"></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn-primary small" style="flex:1;margin-top:0;padding:10px 6px" onclick="manualSync()">🔄 Şimdi Eşitle</button>
+        <button class="btn-gray small" style="flex:1;margin-top:0;padding:10px 6px" onclick="doLogout()">Çıkış Yap</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>🛍️ Sipariş Listesi</h2>
+      <div class="row"><input type="text" id="ordTh" inputmode="numeric" value="3" oninput="ordCh()"><input type="text" id="ordTg" inputmode="numeric" value="12" oninput="ordCh()"></div>
+      <p class="hint" style="margin-top:6px">Sol: bu adet ve altındakiler listelenir. Sağ: ürün başına hedef stok. Eşik, açılış uyarısında da kullanılır.</p>
+      <table><tbody id="ordBody"></tbody></table>
+      <p class="hint" id="ordTotal" style="margin-top:8px"></p>
+      <button class="btn-primary" onclick="copyOrder()">Listeyi Kopyala</button>
+      <button class="btn-success" onclick="shareOrder()">📱 WhatsApp ile Paylaş</button>
+    </div>
+    <div class="card">
+      <h2>🏬 Depodan Rafa Taşı</h2>
+      <p class="hint">Mal girişleri depoya eklenir; satış raf stoğundan düşer. Satışa hazır malı buradan rafa aktarın.</p>
+      <select id="moveProduct"></select>
+      <div class="row" style="margin-top:8px">
+        <input type="text" id="moveQty" inputmode="numeric" placeholder="Adet" autocomplete="off">
+        <button class="btn-primary" style="width:auto;margin-top:0" onclick="moveToShelf()">Rafa Taşı</button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>📒 Veresiye</h2>
+      <p class="hint">Satış ekranında kişi adı yazıp "Veresiyeye Yaz" ile borç oluşur. Kişinin adına dokununca döküm ve WhatsApp hatırlatma çıkar.</p>
+      <table><tbody id="debtBody"></tbody></table>
+      <p class="hint" id="debtTotal" style="margin-top:8px"></p>
+    </div>
+    <div class="card">
+      <h2>🗑️ Fire / İade</h2>
+      <select id="lossProduct"></select>
+      <div class="row" style="margin-top:8px"><input type="text" id="lossQty" inputmode="numeric" placeholder="Adet"><select id="lossKind"><option>Fire</option><option>İade</option></select></div>
+      <button class="btn-danger" onclick="saveLoss()">Stoktan Düş</button>
+    </div>
+    <div class="card">
+      <h2>⏳ Son Kullanma Tarihi</h2>
+      <select id="sktProduct"></select>
+      <input type="date" id="sktDate" style="margin-top:8px">
+      <button class="btn-success" onclick="saveSkt()">Tarihi Kaydet</button>
+      <table><tbody id="sktBody"></tbody></table>
+    </div>
+    <div class="card">
+      <h2>📤 Satış Raporu (CSV)</h2>
+      <p class="hint">Seçili tarih aralığındaki satışları Excel'e aktarır (başlangıç boşsa sayım döneminin başından, bitiş boşsa bugüne kadar).</p>
+      <div class="row"><input type="date" id="expFrom"><input type="date" id="expTo"></div>
+      <button class="btn-primary" onclick="exportSales()">Satışları Aktar</button>
+    </div>
+    <div class="card">
+      <h2>⚙️ Satış Ayarı</h2>
+      <label style="display:flex;gap:10px;align-items:center;margin:0;font-size:14px"><input type="checkbox" id="setReceipt" style="width:auto" onchange="setReceiptPref()"> Satış sonrası fiş penceresini göster</label>
+    </div>
+    <div class="card">
+      <h2>💾 Yedekleme</h2>
+      <p class="hint">Veriler hem bu cihazda hem de (bulut açıksa) hesabında saklanır. Düzenli yedek alman iyi olur.</p>
+      <div id="bkBanner" class="msg err hidden">⚠️ Yedek zamanı geldi. Aşağıdaki "Yedek Al" ile yeni yedek indirin.</div>
+      <button class="btn-primary" onclick="backupDownload()">Yedek Al</button>
+      <textarea id="bkText" rows="3" placeholder="Yedek metni burada görünür. Geri yüklemek için buraya yapıştırın veya dosya seçin." style="width:100%;margin-top:10px;padding:10px;border:1px solid #ccc;border-radius:6px"></textarea>
+      <input type="file" id="bkFile" accept=".json,.txt" style="margin-top:8px">
+      <button class="btn-danger" onclick="backupRestore()">Yedekten Geri Yükle</button>
+    </div>
+  </div>
+
+  <!-- MESAJ (WHATSAPP) -->
+  <div id="panel-msg" class="hidden">
+    <div id="wmMsg" class="msg"></div>
+    <div class="card">
+      <h2>👥 Müşteri Kaydı</h2>
+      <p class="hint">Telefon numarası kayıtlı müşterilere satış, veresiye ve ödeme mesajı WhatsApp'tan gönderilir. Mesaj hazır gelir, WhatsApp'ta "Gönder"e siz basarsınız.</p>
+      <label for="cuName">Ad soyad</label>
+      <input type="text" id="cuName" list="debtNames" autocomplete="off">
+      <label for="cuPhone">Cep telefonu</label>
+      <input type="tel" id="cuPhone" placeholder="05xx xxx xx xx" autocomplete="off">
+      <label for="cuLimit">Veresiye limiti ₺ (isteğe bağlı)</label>
+      <input type="text" id="cuLimit" inputmode="decimal" placeholder="Örn: 500" autocomplete="off">
+      <button class="btn-success" id="cuSave" onclick="saveCustomer()">Müşteriyi Kaydet</button>
+      <button class="btn-gray hidden" id="cuCancel" onclick="cancelCustomerEdit()">Vazgeç</button>
+      <div id="custList" style="margin-top:10px"></div>
+    </div>
+    <div class="card">
+      <h2>📒 Borç Hatırlatma</h2>
+      <select id="remAge" onchange="renderRem()">
+        <option value="0">Tüm açık borçlar</option>
+        <option value="7">7 günden eski</option>
+        <option value="30">30 günden eski</option>
+      </select>
+      <table><tbody id="remBody"></tbody></table>
+      <p class="hint" id="remInfo" style="margin-top:8px"></p>
+      <button class="btn-primary" onclick="startDebtQueue()">Sırayla Hatırlat</button>
+    </div>
+    <div class="card">
+      <h2>📣 Duyuru</h2>
+      <textarea class="mt" id="annText" rows="3"></textarea>
+      <select id="annAud" onchange="updAnnInfo()" style="margin-top:8px">
+        <option value="all">Tüm müşteriler</option>
+        <option value="debt">Sadece borcu olanlar</option>
+      </select>
+      <p class="hint" id="annInfo" style="margin-top:8px"></p>
+      <button class="btn-primary" onclick="startAnnQueue()">Sırayla Gönder</button>
+    </div>
+    <div class="card">
+      <h2>📊 Günün Özetini Paylaş</h2>
+      <input type="date" id="dsDate" onchange="renderDaySummaryPreview()">
+      <input type="tel" id="dsPhone" placeholder="Gönderilecek numara (boşsa kişiyi siz seçersiniz)" style="margin-top:8px" autocomplete="off">
+      <div class="msgprev" id="dsPrev"></div>
+      <button class="btn-primary" onclick="shareDaySummary()">📱 WhatsApp ile Paylaş</button>
+    </div>
+    <div class="card">
+      <h2>⚙️ Mesaj Ayarları</h2>
+      <label style="display:flex;gap:10px;align-items:center;margin:0;font-size:14px"><input type="checkbox" id="setAutoWa" style="width:auto" onchange="setAutoWaPref()"> Kayıtlı müşteri alışverişinde WhatsApp'ı otomatik aç</label>
+      <details style="margin-top:12px">
+        <summary style="cursor:pointer;font-weight:bold">✏️ Mesaj şablonları</summary>
+        <p class="hint" style="margin-top:8px">{ad} {borc} {bakiye} {tarih} {kalemler} {toplam} {odeme} alanları otomatik doldurulur.</p>
+        <label for="tplBorc">Borç hatırlatma</label>
+        <textarea class="mt" id="tplBorc" rows="3"></textarea>
+        <label for="tplSatis">Satış mesajı</label>
+        <textarea class="mt" id="tplSatis" rows="5"></textarea>
+        <label for="tplOdeme">Ödeme teşekkürü</label>
+        <textarea class="mt" id="tplOdeme" rows="3"></textarea>
+        <button class="btn-success" onclick="saveTemplates()">Şablonları Kaydet</button>
+        <button class="btn-gray" onclick="resetTemplates()">Varsayılana Dön</button>
+      </details>
+    </div>
+  </div>
+
+  <!-- ÜRÜNLER -->
+  <div id="panel-list" class="hidden">
+    <div class="card">
+      <h2>📋 Tanımlı Ürünler</h2>
+      <div class="product-list" id="productList"></div>
+    </div>
+    <div class="card">
+      <h2>📥 Excel Listesinden Yükle</h2>
+      <p class="hint">Taşkent kantin sayım dosyasındaki 59 ürünü barkod, satış fiyatı ve stok adediyle yükler. Aynı isimli ürünlerde mevcut fiyat, stok, depo ve kategori korunur; barkod ve alış fiyatı tamamlanır. Diğer ürünlere dokunulmaz.</p>
+      <button class="btn-primary" onclick="importSeed()">Barkod, Fiyat ve Stokları Yükle</button>
+      <button class="btn-danger" onclick="purgeNonExcel()">Excel Dışı Ürünleri Sil</button>
+      <div id="importMsg" class="msg"></div>
+    </div>
+  </div>
+</div>
+
+<div id="modalWrap" class="modal-wrap hidden" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modalBody"></div>
+</div>
+<div id="printArea"></div>
+
+<script>
+// ===== Firebase ayarları =====
+// Firebase Console > Project settings > Your apps > Web app'ten aldığın değerleri buraya yapıştır.
+// Boş bırakırsan uygulama bulutsuz (sadece bu cihazda) çalışır.
+const FIREBASE_CONFIG = {
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: ""
+};
+
+let fbAuth = null, fbDb = null, fbUser = null;
+let cloudEnabled = false, booted = false, syncState = 'off';
+const pendingSync = {};
+let syncTimer = null;
+let lastSyncTime = 0;
+
+// ===== Veri (localStorage) =====
+const STORE_KEY = 'kantin_products';
+let products = {};
+try { products = JSON.parse(localStorage.getItem(STORE_KEY) || '{}') || {}; } catch (e) { products = {}; }
+let cart = {};
+let editingKey = null;
+let activeCat = 'all';
+let lastReceipt = null;
+
+function saveProducts() {
+  try {
+    const v = JSON.stringify(products);
+    localStorage.setItem(STORE_KEY, v);
+    cloudQueue(STORE_KEY, v);
+  } catch (e) { showMsg('define', 'Kayıt yapılamadı: tarayıcı depolaması kapalı olabilir.', 'err', 6000); }
+}
+
+// ===== Ayarlar =====
+let settings = loadJ('kantin_set', null) || { dark: false, lastBackup: Date.now(), salesSinceBk: 0, critTh: 3, priceMode: 'p1' };
+function saveSet() {
+  const v = JSON.stringify(settings);
+  saveJ('kantin_set', v);
+  cloudQueue('kantin_set', v);
+}
+function toggleDark() { settings.dark = !settings.dark; saveSet(); applyDark(); }
+function applyDark() { document.body.classList.toggle('dark', !!settings.dark); const b=document.getElementById('darkBtn'); if(b) b.textContent = settings.dark ? '☀️' : '🌙'; }
+function setPriceMode(m) {
+  settings.priceMode = m; saveSet();
+  document.getElementById('modeP1').classList.toggle('active', m === 'p1');
+  document.getElementById('modeP2').classList.toggle('active', m === 'p2');
+  renderGrid(); renderCart(); updateChange();
+}
+
+// ===== Yardımcılar =====
+function money(kurus) {
+  return (kurus / 100).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
+}
+function toKurus(price) { return Math.round(Number(price) * 100); }
+function parsePrice(text) {
+  const n = parseFloat(String(text).trim().replace(/\s/g, '').replace(',', '.'));
+  return isNaN(n) ? NaN : n;
+}
+function hasStock(p) { return typeof p.stock === 'number' && !isNaN(p.stock); }
+function parseStock(text) {
+  const t = String(text).trim();
+  if (t === '') return null;
+  const n = parseInt(t, 10);
+  return (isNaN(n) || n < 0) ? NaN : n;
+}
+function findKey(code) {
+  if (products[code]) return code;
+  const lower = code.toLowerCase();
+  return Object.keys(products).find(k => k.toLowerCase() === lower) || null;
+}
+function newAutoCode() {
+  let i = Object.keys(products).length + 1;
+  while (products['URN-' + String(i).padStart(4, '0')]) i++;
+  return 'URN-' + String(i).padStart(4, '0');
+}
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function priceOf(k) { const p = products[k]; return (settings.priceMode === 'p2' && p.price2) ? p.price2 : p.price; }
+function calcCartTotal() { return Object.keys(cart).filter(k => products[k]).reduce((s, k) => s + toKurus(priceOf(k)) * cart[k], 0); }
+
+// ===== Ses =====
+let AC = null;
+function beep(f, d) {
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = 'sine'; o.frequency.value = f || 880;
+    g.gain.setValueAtTime(0.1, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + (d || 0.08));
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + (d || 0.08));
+  } catch (e) {}
+}
+
+// ===== Modal =====
+function openModal(html) { document.getElementById('modalBody').innerHTML = html; document.getElementById('modalWrap').classList.remove('hidden'); }
+function closeModal() { document.getElementById('modalWrap').classList.add('hidden'); document.getElementById('modalBody').innerHTML = ''; }
+
+// ===== Yazdırma =====
+function printHTML(html) {
+  const pa = document.getElementById('printArea');
+  pa.innerHTML = html;
+  document.body.classList.add('printing');
+  setTimeout(() => { window.print(); setTimeout(() => document.body.classList.remove('printing'), 400); }, 60);
+}
+
+const msgTimers = {};
+function showMsg(mode, text, type, duration) {
+  const el = document.getElementById({ define: 'defineMsg', cart: 'cartMsg', cnt: 'countMsg', inm: 'inMsg', xl: 'xlMsg', tl: 'toolMsg', sm: 'sumMsg', wm: 'wmMsg' }[mode] || 'sellMsg');
+  if (!el) return;
+  el.className = 'msg ' + type;
+  el.textContent = text;
+  clearTimeout(msgTimers[mode]);
+  msgTimers[mode] = setTimeout(() => { el.className = 'msg'; }, duration || 3500);
+}
+
+// ===== Sekmeler =====
+function showTab(tab) {
+  ['sell', 'define', 'list', 'count', 'summary', 'tools', 'msg'].forEach(t => {
+    document.getElementById('panel-' + t).classList.toggle('hidden', t !== tab);
+    document.getElementById('tab' + t.charAt(0).toUpperCase() + t.slice(1)).classList.toggle('active', t === tab);
+  });
+  if (tab === 'sell') { renderGrid(); renderRecent(); }
+  if (tab === 'list') renderProductList();
+  if (tab === 'count') renderCount();
+  if (tab === 'summary') renderOverview();
+  if (tab === 'tools') { renderTools(); renderAccount(); }
+  if (tab === 'msg') openMsgTab();
+  if (tab !== 'define' && editingKey) cancelEdit();
+}
+
+// ===== Satış =====
+function addToCart(key) {
+  cart[key] = (cart[key] || 0) + 1;
+  beep(700, 0.05);
+  renderCart();
+  updateChange();
+}
+
+function addByCode() {
+  const input = document.getElementById('codeInput');
+  const code = input.value.trim();
+  if (!code) return;
+  const key = findKey(code);
+  input.value = '';
+  if (!key) {
+    showMsg('sell', 'Bu kod tanımlı değil: ' + code, 'err');
+    return;
+  }
+  addToCart(key);
+  showMsg('sell', '✅ ' + products[key].name + ' sepete eklendi.', 'ok', 1800);
+  input.focus();
+}
+
+document.getElementById('codeInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); addByCode(); }
+});
+
+function catsOf() {
+  const s = [];
+  Object.keys(products).forEach(k => { const c = products[k].cat; if (c && s.indexOf(c) < 0) s.push(c); });
+  return s.sort((a, b) => a.localeCompare(b, 'tr'));
+}
+function renderCatChips() {
+  const box = document.getElementById('catChips');
+  box.innerHTML = '';
+  const cats = catsOf();
+  if (!cats.length) return;
+  const mk = (label, val) => {
+    const b = document.createElement('button');
+    b.className = 'chip' + (activeCat === val ? ' active' : '');
+    b.textContent = label;
+    b.onclick = () => { activeCat = val; renderGrid(); };
+    box.appendChild(b);
+  };
+  mk('Tümü', 'all');
+  cats.forEach(c => mk(c, c));
+}
+
+function renderGrid() {
+  renderCatChips();
+  const grid = document.getElementById('productGrid');
+  const q = document.getElementById('searchInput').value.trim().toLocaleLowerCase('tr-TR');
+  grid.innerHTML = '';
+  const keys = Object.keys(products)
+    .filter(k => activeCat === 'all' || products[k].cat === activeCat)
+    .filter(k => products[k].name.toLocaleLowerCase('tr-TR').includes(q))
+    .sort((a, b) => products[a].name.localeCompare(products[b].name, 'tr'));
+  if (keys.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'empty';
+    p.style.gridColumn = '1 / -1';
+    p.textContent = Object.keys(products).length === 0
+      ? 'Henüz ürün yok. "Ekle" sekmesinden ilk ürünü tanımlayın.'
+      : 'Aramaya uygun ürün bulunamadı.';
+    grid.appendChild(p);
+    return;
+  }
+  keys.forEach(k => {
+    const b = document.createElement('button');
+    b.className = 'prod';
+    const n = document.createElement('b'); n.textContent = products[k].name;
+    const f = document.createElement('span'); f.textContent = money(toKurus(priceOf(k)));
+    b.appendChild(n); b.appendChild(f);
+    if (hasStock(products[k])) {
+      const st = document.createElement('span'); st.className = 'stock';
+      st.textContent = 'Raf: ' + (products[k].stock > 0 ? products[k].stock : 'yok');
+      b.appendChild(st);
+      if (products[k].stock <= 0) b.classList.add('out');
+    }
+    if (products[k].depo > 0) {
+      const dp = document.createElement('span'); dp.className = 'stock';
+      dp.textContent = 'Depo: ' + products[k].depo;
+      b.appendChild(dp);
+    }
+    if (products[k].cat) {
+      const ct = document.createElement('span'); ct.className = 'stock';
+      ct.textContent = products[k].cat;
+      b.appendChild(ct);
+    }
+    b.onclick = () => addToCart(k);
+    grid.appendChild(b);
+  });
+}
+
+function renderRecent() {
+  const box = document.getElementById('recentStrip');
+  box.innerHTML = '';
+  const seen = [];
+  const sales = logs.filter(l => l.type === 'sale').slice(-40);
+  for (let i = sales.length - 1; i >= 0 && seen.length < 8; i--) {
+    const l = sales[i];
+    if (products[l.key] && seen.indexOf(l.key) < 0) {
+      seen.push(l.key);
+      const b = document.createElement('button');
+      b.className = 'chip';
+      b.textContent = '↩ ' + l.name;
+      b.onclick = () => addToCart(l.key);
+      box.appendChild(b);
+    }
+  }
+}
+
+function renderCart() {
+  const body = document.getElementById('cartBody');
+  body.innerHTML = '';
+  let total = 0;
+  const keys = Object.keys(cart).filter(k => products[k]);
+  Object.keys(cart).forEach(k => { if (!products[k]) delete cart[k]; });
+
+  if (keys.length === 0) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = 3; td.className = 'empty'; td.textContent = 'Sepet boş.';
+    tr.appendChild(td); body.appendChild(tr);
+  }
+
+  keys.forEach(k => {
+    const p = products[k], qty = cart[k];
+    const unit = priceOf(k);
+    const line = toKurus(unit) * qty;
+    total += line;
+
+    const tr = document.createElement('tr');
+    const nameTd = document.createElement('td'); nameTd.textContent = p.name;
+    if (p.price2) { const m = document.createElement('span'); m.className = 'code'; m.textContent = money(toKurus(unit)); nameTd.appendChild(m); }
+    if (hasStock(p) && qty > p.stock) {
+      const w = document.createElement('span'); w.className = 'warn';
+      w.textContent = 'Rafta ' + p.stock + ' adet görünüyor';
+      nameTd.appendChild(w);
+    }
+
+    const qtyTd = document.createElement('td'); qtyTd.className = 'num';
+    const wrap = document.createElement('div'); wrap.className = 'qty';
+    const minus = document.createElement('button'); minus.textContent = '−'; minus.setAttribute('aria-label', p.name + ' azalt');
+    minus.onclick = () => changeQty(k, -1);
+    const count = document.createElement('span'); count.textContent = qty;
+    const plus = document.createElement('button'); plus.textContent = '+'; plus.setAttribute('aria-label', p.name + ' artır');
+    plus.onclick = () => changeQty(k, 1);
+    const b5 = document.createElement('button'); b5.textContent = '+5'; b5.className = 'wide'; b5.setAttribute('aria-label', p.name + ' 5 artır');
+    b5.onclick = () => changeQty(k, 5);
+    wrap.appendChild(minus); wrap.appendChild(count); wrap.appendChild(plus); wrap.appendChild(b5);
+    qtyTd.appendChild(wrap);
+
+    const sumTd = document.createElement('td'); sumTd.className = 'num'; sumTd.textContent = money(line);
+    tr.appendChild(nameTd); tr.appendChild(qtyTd); tr.appendChild(sumTd);
+    body.appendChild(tr);
+  });
+
+  document.getElementById('cartTotal').textContent = 'Toplam: ' + money(total);
+}
+
+function changeQty(key, delta) {
+  cart[key] = (cart[key] || 0) + delta;
+  if (cart[key] <= 0) delete cart[key];
+  renderCart();
+  updateChange();
+}
+
+function setPaid(v) {
+  const t = calcCartTotal();
+  document.getElementById('paidAmt').value = String(v === 'exact' ? (t / 100) : v);
+  updateChange();
+  beep(600, 0.05);
+}
+function updateChange() {
+  const box = document.getElementById('changeBox');
+  const raw = document.getElementById('paidAmt').value.trim();
+  const t = calcCartTotal();
+  if (!raw || t === 0) { box.textContent = ''; return; }
+  const p = parsePrice(raw);
+  if (isNaN(p)) { box.textContent = ''; return; }
+  const ch = toKurus(p) - t;
+  box.className = 'change-box ' + (ch < 0 ? 'bad' : 'ok');
+  box.textContent = ch < 0 ? ('Eksik: ' + money(-ch)) : ('Para üstü: ' + money(ch));
+}
+
+function completeSale(onCredit) {
+  const keys = Object.keys(cart).filter(k => products[k]);
+  if (keys.length === 0) { showMsg('cart', 'Sepet boş.', 'err'); return; }
+  const typed = document.getElementById('debtName').value.trim();
+  const who = onCredit ? (customerKey(typed) || typed) : '';
+  if (onCredit && !who) { showMsg('cart', 'Veresiye için kişi adını yazın.', 'err'); return; }
+  const ck = customerKey(who || typed);
+  if (onCredit && ck && customers[ck].limit > 0) {
+    const after = bal(who) + calcCartTotal();
+    if (after > toKurus(customers[ck].limit) && !confirm(ck + ' için veresiye limiti ' + money(toKurus(customers[ck].limit)) + '. Bu satırla borç ' + money(after) + ' olacak. Yine de yazılsın mı?')) return;
+  }
+  let total = 0, items = 0;
+  lockOpening();
+  const sid = Date.now();
+  const lines = [];
+  keys.forEach(k => {
+    const qty = cart[k];
+    const pr = priceOf(k);
+    addLog({ type: 'sale', sid: sid, debt: who || undefined, cust: ck || undefined, key: k, name: products[k].name, qty: qty, price: pr });
+    total += toKurus(pr) * qty;
+    items += qty;
+    lines.push({ name: products[k].name, qty: qty, price: pr });
+    if (hasStock(products[k])) products[k].stock = Math.max(0, products[k].stock - qty);
+  });
+  saveProducts();
+  if (who) { (debts[who] = debts[who] || []).push({ t: sid, a: total, items: lines }); saveJ('kantin_debt', debts); document.getElementById('debtName').value = ''; fillDebtNames(); }
+  else if (ck) document.getElementById('debtName').value = '';
+  cart = {};
+  renderCart(); renderGrid(); renderRecent(); checkLowBanner();
+  settings.salesSinceBk++; saveSet(); checkBkBanner();
+  beep(880, 0.1); setTimeout(() => beep(1175, 0.12), 130);
+  const paidRaw = document.getElementById('paidAmt').value.trim();
+  const paid = paidRaw ? parsePrice(paidRaw) : NaN;
+  const paidV = isNaN(paid) ? null : paid;
+  if (settings.showReceipt === false) lastReceipt = { sid: sid, lines: lines, total: total, who: who, paid: paidV, cust: ck };
+  else showReceipt(sid, lines, total, who, paidV, ck);
+  if (ck && settings.autoWa && customers[ck].phone) waOpen(waUrl(customers[ck].phone, saleMsg(ck, sid, lines, total)));
+  document.getElementById('paidAmt').value = ''; updateChange();
+  showMsg('cart', '✅ Satış tamamlandı: ' + items + ' ürün, ' + money(total) + (who ? ' (veresiye: ' + who + ')' : ''), 'ok', 5000);
+}
+
+function clearCart() {
+  if (Object.keys(cart).length === 0) return;
+  cart = {};
+  renderCart();
+  updateChange();
+}
+
+function receiptHTML(sid, lines, total, who, paid) {
+  let h = '<h3>🧾 Fiş</h3><div class="code">' + new Date(sid).toLocaleString('tr-TR') + (who ? '<br>Veresiye: ' + esc(who) : '') + '</div>';
+  h += '<table><thead><tr><th>Ürün</th><th class="num">Adet</th><th class="num">Tutar</th></tr></thead><tbody>';
+  lines.forEach(l => { h += '<tr><td>' + esc(l.name) + '</td><td class="num">' + l.qty + '</td><td class="num">' + money(toKurus(l.price) * l.qty) + '</td></tr>'; });
+  h += '</tbody></table><div class="total" style="font-size:18px">Toplam: ' + money(total) + '</div>';
+  if (paid !== null && paid !== undefined) {
+    const ch = toKurus(paid) - total;
+    h += '<div class="code">Alınan: ' + money(toKurus(paid)) + '</div>';
+    h += '<div class="' + (ch < 0 ? 'diff bad' : 'diff ok') + '" style="font-size:16px">Para üstü: ' + money(Math.abs(ch)) + (ch < 0 ? ' (eksik!)' : '') + '</div>';
+  }
+  return h;
+}
+function showReceipt(sid, lines, total, who, paid, cust) {
+  lastReceipt = { sid: sid, lines: lines, total: total, who: who, paid: paid, cust: cust };
+  openModal(receiptHTML(sid, lines, total, who, paid) + waSaleButton(cust, sid, lines, total) +
+    '<div class="row" style="margin-top:10px"><button class="btn-primary" style="flex:1" onclick="printLastReceipt()">🖨️ Yazdır</button><button class="btn-gray" style="flex:1" onclick="closeModal()">Kapat</button></div>');
+}
+function printLastReceipt() {
+  if (!lastReceipt) return;
+  const r = lastReceipt;
+  printHTML('<h2>🏪 Kantin Fişi</h2><p>' + new Date(r.sid).toLocaleString('tr-TR') + (r.who ? ' · Veresiye: ' + esc(r.who) : '') + '</p>' +
+    receiptHTML(r.sid, r.lines, r.total, r.who, r.paid));
+}
+
+function renderSaleHistory() {
+  const box = document.getElementById('saleHist');
+  box.innerHTML = '';
+  const sd = document.getElementById('sumDate');
+  if (!sd.value) sd.value = localISO(new Date());
+  const parts = sd.value.split('-').map(Number);
+  const sales = daySales(parts[0], parts[1] - 1, parts[2]);
+  if (!sales.length) { box.innerHTML = '<p class="empty">Bu gün için satış yok.</p>'; return; }
+  const groups = {};
+  sales.forEach(l => { const g = l.sid || l.id; (groups[g] = groups[g] || []).push(l); });
+  Object.keys(groups).sort((a, b) => Number(b) - Number(a)).forEach(g => {
+    const ls = groups[g];
+    const tot = ls.reduce((s, l) => s + l.qty * toKurus(l.price), 0);
+    const t = document.createElement('table'); const tb = document.createElement('tbody');
+    const tr = document.createElement('tr'); tr.className = 'strong';
+    const a = document.createElement('td');
+    a.textContent = new Date(ls[0].t).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) + (ls[0].debt ? ' · 📒 ' + ls[0].debt : '');
+    const b = document.createElement('td'); b.className = 'num'; b.textContent = money(tot);
+    const c = document.createElement('td'); c.className = 'num';
+    c.appendChild(mkBtn('Fiş', 'btn-primary', () => printSaleGroup(ls)));
+    const wk = customerKey(ls[0].debt || ls[0].cust || '');
+    if (wk && customers[wk].phone) c.appendChild(mkBtn('📱', 'btn-success', () => waOpen(waUrl(customers[wk].phone, saleMsg(wk, ls[0].t, ls.map(l => ({ name: l.name, qty: l.qty, price: l.price })), tot)))));
+    c.appendChild(mkBtn('İptal', 'btn-danger', () => cancelSaleGroup(ls)));
+    tr.appendChild(a); tr.appendChild(b); tr.appendChild(c); tb.appendChild(tr);
+    ls.forEach(l => {
+      const r = document.createElement('tr');
+      const x = document.createElement('td'); x.textContent = l.name + ' × ' + l.qty;
+      const z = document.createElement('td'); z.className = 'num'; z.textContent = money(l.qty * toKurus(l.price));
+      const w = document.createElement('td'); w.className = 'num';
+      w.appendChild(mkBtn('✕', 'btn-danger', () => cancelSaleLine(l.id)));
+      r.appendChild(x); r.appendChild(z); r.appendChild(w); tb.appendChild(r);
+    });
+    t.appendChild(tb); box.appendChild(t);
+  });
+}
+function printSaleGroup(ls) {
+  const sid = ls[0].sid || ls[0].id;
+  const tot = ls.reduce((s, l) => s + l.qty * toKurus(l.price), 0);
+  printHTML('<h2>🏪 Kantin Fişi</h2><p>' + new Date(ls[0].t).toLocaleString('tr-TR') + (ls[0].debt ? ' · Veresiye: ' + esc(ls[0].debt) : '') + '</p>' +
+    receiptHTML(sid, ls.map(l => ({ name: l.name, qty: l.qty, price: l.price })), tot, ls[0].debt, null));
+}
+function cancelSaleGroup(ls) {
+  const tot = ls.reduce((s, l) => s + l.qty * toKurus(l.price), 0);
+  if (!confirm('Bu satış (' + money(tot) + ') iptal edilsin mi? Stoklar geri eklenir.')) return;
+  ls.forEach(l => { if (products[l.key] && hasStock(products[l.key])) products[l.key].stock += l.qty; });
+  const who = ls[0].debt;
+  if (who && debts[who]) { debts[who].push({ t: Date.now(), a: -tot, note: 'Satış iptali' }); saveJ('kantin_debt', debts); }
+  logs = logs.filter(l => ls.indexOf(l) < 0); saveJ('kantin_log', logs);
+  saveProducts(); renderOverview(); renderGrid(); checkLowBanner();
+  showMsg('sm', '↩️ Satış iptal edildi.', 'ok');
+}
+function cancelSaleLine(id) {
+  const i = logs.findIndex(l => l.id === id); if (i < 0) return;
+  const l = logs[i];
+  if (!confirm(l.name + ' × ' + l.qty + ' iptal edilsin mi?')) return;
+  if (products[l.key] && hasStock(products[l.key])) products[l.key].stock += l.qty;
+  if (l.debt && debts[l.debt]) { debts[l.debt].push({ t: Date.now(), a: -l.qty * toKurus(l.price), note: 'Kalem iptali' }); saveJ('kantin_debt', debts); }
+  logs.splice(i, 1); saveJ('kantin_log', logs);
+  saveProducts(); renderOverview(); renderGrid(); checkLowBanner();
+  showMsg('sm', '↩️ Kalem iptal edildi.', 'ok');
+}
+
+function zReport() {
+  const sd = document.getElementById('sumDate');
+  const dt = sd.value || localISO(new Date());
+  const parts = dt.split('-').map(Number);
+  const sales = daySales(parts[0], parts[1] - 1, parts[2]);
+  let total = 0, items = 0, credit = 0, profit = 0;
+  const agg = {};
+  sales.forEach(l => {
+    const line = l.qty * toKurus(l.price);
+    total += line; items += l.qty;
+    if (l.debt) credit += line;
+    const c = products[l.key] && products[l.key].cost;
+    if (c) profit += line - l.qty * toKurus(c);
+    agg[l.name] = (agg[l.name] || 0) + l.qty;
+  });
+  let h = '<h2>🏪 Gün Sonu Raporu (Z)</h2><p>' + new Date(parts[0], parts[1] - 1, parts[2]).toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) + '</p><table><tbody>';
+  const row = (a, b) => '<tr><td>' + a + '</td><td class="num">' + b + '</td></tr>';
+  h += row('Satış tutarı', '<b>' + money(total) + '</b>') + row('Satılan adet', String(items)) +
+       row('Tahmini kâr (alış bilinenler)', money(profit)) + row('Veresiye satış', money(credit)) +
+       row('Nakit tahmini', money(total - credit)) + '</tbody></table>';
+  const names = Object.keys(agg).sort((a, b) => agg[b] - agg[a]);
+  if (names.length) {
+    h += '<h3>Ürün bazlı satış</h3><table><tbody>' + names.map(n => row(esc(n), agg[n] + ' adet')).join('') + '</tbody></table>';
+  }
+  printHTML(h);
+}
+
+// ===== Ürün Ekle / Düzenle =====
+function saveProduct() {
+  const name = document.getElementById('newName').value.trim();
+  const price = parsePrice(document.getElementById('newPrice').value);
+  const price2 = parsePrice(document.getElementById('newPrice2').value);
+  const cat = document.getElementById('newCat').value.trim();
+  let code = document.getElementById('newCode').value.trim();
+  const stock = parseStock(document.getElementById('newStock').value);
+
+  if (isNaN(stock)) { showMsg('define', 'Stok için 0 veya daha büyük bir tam sayı girin.', 'err'); return; }
+  if (!name) { showMsg('define', 'Ürün adını girin.', 'err'); return; }
+  if (isNaN(price) || price < 0) { showMsg('define', 'Geçerli bir fiyat girin.', 'err'); return; }
+
+  if (editingKey) {
+    if (!code) code = editingKey;
+    if (code !== editingKey && findKey(code)) { showMsg('define', 'Bu kod başka bir üründe kullanılıyor: ' + products[findKey(code)].name, 'err'); return; }
+    const oldP = products[editingKey] || {};
+    const rec = Object.assign({}, oldP, { name: name, price: price });
+    if (stock === null) delete rec.stock; else rec.stock = stock;
+    if (cat) rec.cat = cat; else delete rec.cat;
+    if (!isNaN(price2) && price2 > 0) rec.price2 = price2; else delete rec.price2;
+    if (oldP.price !== undefined && oldP.price !== price) {
+      rec.ph = (oldP.ph || []).concat([{ t: Date.now(), old: oldP.price, new: price }]).slice(-10);
+    }
+    if (code !== editingKey) {
+      delete products[editingKey];
+      if (cart[editingKey]) { cart[code] = cart[editingKey]; delete cart[editingKey]; }
+    }
+    products[code] = rec;
+    saveProducts();
+    cancelEdit();
+    showMsg('define', '✅ "' + name + '" güncellendi.', 'ok');
+    return;
+  }
+
+  if (!code) code = newAutoCode();
+  const existing = findKey(code);
+  if (existing) { showMsg('define', 'Bu kod zaten tanımlı: ' + products[existing].name, 'err'); return; }
+
+  const rec = { name: name, price: price };
+  if (stock !== null) rec.stock = stock;
+  if (!isNaN(price2) && price2 > 0) rec.price2 = price2;
+  if (cat) rec.cat = cat;
+  products[code] = rec;
+  saveProducts();
+  document.getElementById('newName').value = '';
+  document.getElementById('newPrice').value = '';
+  document.getElementById('newPrice2').value = '';
+  document.getElementById('newCat').value = '';
+  document.getElementById('newStock').value = '';
+  document.getElementById('newCode').value = '';
+  showMsg('define', '✅ "' + name + '" eklendi. Kodu: ' + code, 'ok', 5000);
+  document.getElementById('newName').focus();
+}
+
+function startEdit(key) {
+  editingKey = key;
+  showTab('define');
+  editingKey = key;
+  document.getElementById('defineTitle').textContent = '✏️ Ürünü Düzenle';
+  document.getElementById('newName').value = products[key].name;
+  document.getElementById('newPrice').value = String(products[key].price).replace('.', ',');
+  document.getElementById('newPrice2').value = products[key].price2 ? String(products[key].price2).replace('.', ',') : '';
+  document.getElementById('newCat').value = products[key].cat || '';
+  document.getElementById('newStock').value = hasStock(products[key]) ? String(products[key].stock) : '';
+  document.getElementById('newCode').value = key;
+  document.getElementById('saveBtn').textContent = 'Değişiklikleri Kaydet';
+  document.getElementById('cancelEditBtn').classList.remove('hidden');
+}
+
+function cancelEdit() {
+  editingKey = null;
+  document.getElementById('defineTitle').textContent = '➕ Yeni Ürün';
+  document.getElementById('newName').value = '';
+  document.getElementById('newPrice').value = '';
+  document.getElementById('newPrice2').value = '';
+  document.getElementById('newCat').value = '';
+  document.getElementById('newStock').value = '';
+  document.getElementById('newCode').value = '';
+  document.getElementById('saveBtn').textContent = 'Ürünü Kaydet';
+  document.getElementById('cancelEditBtn').classList.add('hidden');
+}
+
+function renderProductList() {
+  const list = document.getElementById('productList');
+  list.innerHTML = '';
+  const keys = Object.keys(products).sort((a, b) => products[a].name.localeCompare(products[b].name, 'tr'));
+  if (keys.length === 0) {
+    const p = document.createElement('p'); p.className = 'empty';
+    p.textContent = 'Henüz ürün tanımlanmadı.';
+    list.appendChild(p);
+    return;
+  }
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  thead.innerHTML = '<tr><th>Ürün</th><th class="num">Fiyat</th><th></th></tr>';
+  table.appendChild(thead);
+  const tbody = document.createElement('tbody');
+  keys.forEach(key => {
+    const p = products[key];
+    const tr = document.createElement('tr');
+
+    const n = document.createElement('td');
+    const nm = document.createElement('div'); nm.textContent = p.name + (p.price2 ? ' / ' + money(toKurus(p.price2)) : '');
+    const cd = document.createElement('div'); cd.className = 'code';
+    cd.textContent = key + (hasStock(p) ? ' · Raf: ' + p.stock : '') + (p.depo > 0 ? ' · Depo: ' + p.depo : '') + (p.cat ? ' · ' + p.cat : '');
+    n.appendChild(nm); n.appendChild(cd);
+
+    const f = document.createElement('td'); f.className = 'num'; f.textContent = money(toKurus(p.price));
+
+    const a = document.createElement('td'); a.className = 'actions';
+    const hist = document.createElement('button'); hist.className = 'small btn-gray'; hist.textContent = 'Geçmiş';
+    hist.onclick = () => showProductHistory(key);
+    const edit = document.createElement('button'); edit.className = 'small btn-primary'; edit.textContent = 'Düzenle';
+    edit.onclick = () => startEdit(key);
+    const del = document.createElement('button'); del.className = 'small btn-danger'; del.textContent = 'Sil';
+    del.onclick = () => deleteProduct(key);
+    a.appendChild(hist); a.appendChild(edit); a.appendChild(del);
+
+    tr.appendChild(n); tr.appendChild(f); tr.appendChild(a);
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  list.appendChild(table);
+}
+
+function showProductHistory(k) {
+  const p = products[k];
+  if (!p) return;
+  let h = '<h3>📋 ' + esc(p.name) + '</h3><p class="code">' + esc(k) + ' · Raf: ' + expectedOf(k) + ' · Depo: ' + (p.depo || 0) + '</p>';
+  if (p.ph && p.ph.length) {
+    h += '<h4 style="margin-top:10px">Fiyat geçmişi</h4>';
+    p.ph.slice().reverse().forEach(r => { h += '<div class="code">' + new Date(r.t).toLocaleDateString('tr-TR') + ': ' + r.old + ' → ' + r.new + ' ₺</div>'; });
+  }
+  h += '<h4 style="margin-top:10px">Hareketler (son 50)</h4>';
+  const ls = logs.filter(l => l.key === k).slice().reverse().slice(0, 50);
+  if (!ls.length) h += '<p class="empty">Kayıtlı hareket yok.</p>';
+  else {
+    h += '<table><tbody>';
+    ls.forEach(l => {
+      const tp = l.type === 'sale' ? 'Satış' : (l.type === 'in' ? 'Mal girişi' : (l.kind === 'İade' ? 'İade' : 'Fire'));
+      const amt = l.type === 'in' ? l.qty * toKurus(l.cost || 0) : l.qty * toKurus(l.price);
+      h += '<tr><td>' + new Date(l.t).toLocaleDateString('tr-TR') + '</td><td>' + tp + '</td><td class="num">' + l.qty + ' adet</td><td class="num">' + money(amt) + '</td></tr>';
+    });
+    h += '</tbody></table>';
+  }
+  h += '<button class="btn-gray" style="margin-top:10px" onclick="closeModal()">Kapat</button>';
+  openModal(h);
+}
+
+function deleteProduct(key) {
+  if (confirm('"' + products[key].name + '" ürününü silmek istediğinize emin misiniz?')) {
+    delete products[key];
+    delete cart[key];
+    saveProducts();
+    renderProductList();
+    renderCart();
+    checkLowBanner();
+  }
+}
+
+// ===== Excel tohum listesi =====
+const SEED = [["8680782529221", "AYBALA CİPSO ORJİNAL SP. 104*24", 32.0, 17, 29.46], ["8680782529245", "AYBALA CİPSO TIR. KETÇAP SP. 104*24", 32.0, 8, 29.46], ["8680782529269", "AYBALA CİPSO YOĞURT VE MEVSİM YEŞİLL.104*24", 32.0, 4, 29.46], ["8681506021069", "AYBALA PATOS ROLS ACI", 32.0, 1, 29.46], ["8691381000486", "BEYPAZARI SADE SODA 200 ML", 10.3, 5, 9.58], ["8690526643298", "ETİ BENİMO ÇİKOLATALI 80 GR", 25.0, 24, 22.96], ["8690526063744", "ETİ BROWNI GOLD VİŞNELİ 45 GR", 10.8, 60, 9.84], ["8690526053738", "ETİ BROWNU GOLD KAKAOLU KEK 45 GR", 10.8, 49, 9.84], ["8690526061108", "ETİ BURÇAK 131 GR", 15.5, 9, 14.44], ["8690526029443", "ETİ BURÇAK HİNDİSTAN CEVİZİ KR.100 G", 18.0, 20, 16.4], ["8690526035444", "ETİ BİDOLU YER FISTIKLI 81 GR", 28.75, 34, 
