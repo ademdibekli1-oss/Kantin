@@ -146,6 +146,13 @@
   ol.guide { margin: 8px 0 0 18px; font-size: 13px; line-height: 1.5; }
   .sticky-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; background: #1a3c6e; color: #fff; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); display: flex; align-items: center; justify-content: space-between; gap: 10px; font-weight: bold; box-shadow: 0 -2px 8px rgba(0,0,0,.25); }
   .sticky-bar button { width: auto; margin: 0; padding: 10px 16px; background: #2e7d32; color: #fff; }
+  #scanWrap { position: fixed; inset: 0; z-index: 200; background: #000; display: flex; flex-direction: column; }
+  #scanWrap video { flex: 1; width: 100%; min-height: 0; object-fit: cover; background: #000; }
+  #scanWrap .scan-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; padding-top: calc(12px + env(safe-area-inset-top)); color: #fff; font-weight: bold; background: rgba(0,0,0,.7); }
+  #scanWrap .scan-top button { width: auto; margin: 0; padding: 10px 16px; background: #c62828; color: #fff; }
+  #scanWrap .scan-frame { position: absolute; left: 50%; top: 50%; width: 70vmin; height: 70vmin; max-width: 320px; max-height: 320px; transform: translate(-50%, -50%); border: 3px solid rgba(255,255,255,.85); border-radius: 16px; pointer-events: none; box-shadow: 0 0 0 100vmax rgba(0,0,0,.35); }
+  #scanWrap .scan-msg { padding: 14px 16px; padding-bottom: calc(14px + env(safe-area-inset-bottom)); color: #fff; background: rgba(0,0,0,.75); text-align: center; font-size: 15px; min-height: 52px; }
+  .scan-btn { background: #6a1b9a; color: #fff; }
   .more-btn { text-align: left; padding: 14px; }
   .more-btn span { display: block; font-weight: normal; font-size: 12px; opacity: .85; margin-top: 2px; }
   .tab-bar { gap: 4px; flex-wrap: nowrap; }
@@ -199,6 +206,7 @@
       <div class="row">
         <input type="text" id="codeInput" placeholder="Ürün kodu" autocomplete="off" autocapitalize="off" enterkeyhint="done">
         <button class="btn-primary" onclick="addByCode()">Ekle</button>
+        <button class="scan-btn" onclick="scanSell()" title="Kamera ile tara">📷</button>
       </div>
       <div id="sellMsg" class="msg"></div>
       <input type="search" id="searchInput" placeholder="Ürün ara" style="margin-top:12px" oninput="renderGrid()" autocomplete="off">
@@ -258,7 +266,7 @@
       <label for="newStock">Raf stoğu (isteğe bağlı)</label>
       <input type="text" id="newStock" inputmode="numeric" placeholder="Örn: 24" autocomplete="off">
       <label for="newCode">Barkod / ürün kodu (isteğe bağlı)</label>
-      <input type="text" id="newCode" placeholder="Boş bırakırsanız otomatik verilir" autocomplete="off" autocapitalize="off">
+      <div class="row"><input type="text" id="newCode" placeholder="Boş bırakırsanız otomatik verilir" autocomplete="off" autocapitalize="off"><button class="scan-btn" onclick="scanNewCode()" title="Kamera ile tara">📷</button></div>
       <p class="hint" style="margin-top:6px">Barkod okuyucunuz varsa bu alana tıklayıp ürünü okutun. Mal girişleri "Mal Girişi" sekmesinden doğrudan rafa eklenir.</p>
       <button class="btn-success" id="saveBtn" onclick="saveProduct()">Ürünü Kaydet</button>
       <button class="btn-gray hidden" id="cancelEditBtn" onclick="cancelEdit()">Vazgeç</button>
@@ -317,7 +325,7 @@
     <div class="card">
       <h2>🔢 Ay Sonu Sayım</h2>
       <p class="hint">Barkod okutunca sayılan 1 artar. Ya da adedi kutuya yazın. "Beklenen" elinizde olması gereken adettir.</p>
-      <input type="text" id="countScan" placeholder="Barkod okut / kod yaz, Enter" autocomplete="off" autocapitalize="off">
+      <div class="row"><input type="text" id="countScan" placeholder="Barkod okut / kod yaz, Enter" autocomplete="off" autocapitalize="off"><button class="scan-btn" onclick="scanCount()" title="Kamera ile tara">📷</button></div>
       <div id="countMsg" class="msg"></div>
       <div class="row" style="margin-top:10px">
         <input type="search" id="countSearch" placeholder="Ürün ara" oninput="renderCountList()" autocomplete="off">
@@ -603,6 +611,13 @@
 </div>
 
 <div id="stickyBar" class="sticky-bar hidden"><span id="stickyTxt"></span><button onclick="goCart()">Sepete git ↓</button></div>
+
+<div id="scanWrap" class="hidden">
+  <div class="scan-top"><span id="scanTitle">Kamera ile tara</span><button onclick="closeScanner()">✕ Kapat</button></div>
+  <video id="scanVideo" playsinline muted autoplay></video>
+  <div class="scan-frame"></div>
+  <div class="scan-msg" id="scanMsg">Kamera açılıyor…</div>
+</div>
 
 <div id="modalWrap" class="modal-wrap hidden" onclick="if(event.target===this)closeModal()">
   <div class="modal" id="modalBody"></div>
@@ -3221,6 +3236,120 @@ function cloudInit() {
 }
 
 function skipLogin() { $('loginWrap').classList.add('hidden'); }
+
+// ===== Kamera ile barkod / QR tarama =====
+// Chrome/Android'de tarayıcının kendi BarcodeDetector'ı kullanılır (QR + barkodlar).
+// Desteklemeyen tarayıcıda (ör. iPhone Safari) QR için jsQR yüklenir (internet gerekir).
+const SCAN = { stream: null, timer: 0, det: null, cb: null, single: false, last: '', lastT: 0, canvas: null, busy: false, run: 0 };
+function scanSay(t) { const el = $('scanMsg'); if (el) el.textContent = t; }
+function loadJsQR() {
+  return new Promise((res, rej) => {
+    if (window.jsQR) return res();
+    const sc = document.createElement('script');
+    sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/jsQR/1.4.0/jsQR.min.js';
+    sc.onload = () => window.jsQR ? res() : rej(new Error('jsQR')); sc.onerror = () => rej(new Error('jsQR'));
+    document.head.appendChild(sc);
+  });
+}
+async function openScanner(title, cb, single) {
+  if (SCAN.stream) closeScanner();
+  const myRun = ++SCAN.run;
+  SCAN.cb = cb; SCAN.single = !!single; SCAN.last = ''; SCAN.lastT = 0;
+  $('scanTitle').textContent = title;
+  $('scanWrap').classList.remove('hidden');
+  scanSay('Kamera açılıyor…');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    scanSay('Kamera kullanılamıyor. Sayfa https:// ile açılmış olmalı (dosya olarak açılınca çoğu telefonda kamera çalışmaz).');
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    if (myRun !== SCAN.run) { stream.getTracks().forEach(t => t.stop()); return; }
+    SCAN.stream = stream;
+    const v = $('scanVideo'); v.srcObject = stream; v.setAttribute('playsinline', ''); v.muted = true;
+    try { await v.play(); } catch (e) {}
+  } catch (e) {
+    const n = e && e.name;
+    scanSay(n === 'NotAllowedError' || n === 'SecurityError' ? 'Kamera izni verilmedi. Tarayıcı ayarlarından bu site için kamerayı açın.' : n === 'NotFoundError' ? 'Bu cihazda kamera bulunamadı.' : 'Kamera açılamadı: ' + (e && e.message || n || ''));
+    return;
+  }
+  SCAN.det = null;
+  try {
+    if ('BarcodeDetector' in window) {
+      let f = ['qr_code', 'ean_13', 'ean_8', 'code_128', 'code_39', 'upc_a', 'upc_e', 'itf', 'codabar'];
+      try { const sup = await BarcodeDetector.getSupportedFormats(); f = f.filter(x => sup.indexOf(x) >= 0); } catch (e) {}
+      if (f.length) SCAN.det = new BarcodeDetector({ formats: f });
+    }
+  } catch (e) { SCAN.det = null; }
+  if (!SCAN.det) {
+    scanSay('QR modülü yükleniyor…');
+    try { await loadJsQR(); } catch (e) { scanSay('Bu tarayıcı barkod taramayı desteklemiyor ve QR modülü yüklenemedi (internet gerekir). Chrome ile deneyin.'); return; }
+    if (myRun !== SCAN.run) return;
+  }
+  scanSay(SCAN.det ? 'Barkodu ya da QR kodu çerçeveye getirin' : 'QR kodu çerçeveye getirin (bu tarayıcıda yalnızca QR okunur)');
+  scanLoop(myRun);
+}
+function closeScanner() {
+  SCAN.run++; clearTimeout(SCAN.timer); SCAN.cb = null;
+  if (SCAN.stream) { SCAN.stream.getTracks().forEach(t => t.stop()); SCAN.stream = null; }
+  const v = $('scanVideo'); if (v) { try { v.pause(); } catch (e) {} v.srcObject = null; }
+  $('scanWrap').classList.add('hidden');
+}
+async function scanLoop(myRun) {
+  if (myRun !== SCAN.run) return;
+  const v = $('scanVideo');
+  if (!SCAN.busy && v.readyState >= 2 && v.videoWidth) {
+    SCAN.busy = true;
+    try {
+      let code = '';
+      if (SCAN.det) {
+        const r = await SCAN.det.detect(v);
+        if (r && r.length) code = String(r[0].rawValue || '').trim();
+      } else if (window.jsQR) {
+        const w = Math.min(640, v.videoWidth), h = Math.round(v.videoHeight * w / v.videoWidth);
+        const c = SCAN.canvas = SCAN.canvas || document.createElement('canvas');
+        c.width = w; c.height = h;
+        const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(v, 0, 0, w, h);
+        const q = window.jsQR(x.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
+        if (q && q.data) code = String(q.data).trim();
+      }
+      if (code && myRun === SCAN.run) {
+        const now = Date.now();
+        if (code !== SCAN.last || now - SCAN.lastT > 2500) {
+          SCAN.last = code; SCAN.lastT = now;
+          if (navigator.vibrate) { try { navigator.vibrate(60); } catch (e) {} }
+          const cb = SCAN.cb, single = SCAN.single;
+          let msg = '';
+          try { msg = cb ? cb(code) : ''; } catch (e) { msg = 'Hata: ' + (e && e.message || e); }
+          if (single) { closeScanner(); SCAN.busy = false; return; }
+          scanSay(msg || ('Okundu: ' + code));
+        }
+      }
+    } catch (e) {}
+    SCAN.busy = false;
+  }
+  if (myRun === SCAN.run) SCAN.timer = setTimeout(() => scanLoop(myRun), 150);
+}
+document.addEventListener('visibilitychange', () => { if (document.hidden && SCAN.stream) closeScanner(); });
+
+function scanSell() {
+  openScanner('🛒 Satış: ürün tara', code => {
+    const key = findKey(code);
+    if (!key) { beep(300, 0.25); return '❌ Bu kod tanımlı değil: ' + code; }
+    addToCart(key);
+    return '✅ ' + products[key].name + ' eklendi (sepette ' + cart[key] + ')';
+  });
+}
+function scanCount() {
+  openScanner('🔢 Sayım: ürün tara', code => {
+    const inp = $('countScan'); inp.value = code;
+    inp.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', cancelable: true, bubbles: true }));
+    return $('countMsg').textContent || ('Okundu: ' + code);
+  });
+}
+function scanNewCode() {
+  openScanner('Barkod / kod tara', code => { $('newCode').value = code; beep(700, 0.05); return 'Okundu: ' + code; }, true);
+}
 
 // ===== PWA (ana ekrana ekleme desteği) =====
 try {
