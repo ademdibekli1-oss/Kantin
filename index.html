@@ -1728,4 +1728,1522 @@ function parseNum(t) {
 function splitLine(l, d) { return l.split(d).map(c => c.trim().replace(/^"(.*)"$/, '$1')); }
 
 function previewExcelIn() {
-  cons
+  const lines = $('xlText').value.replace(/^\uFEFF/, '').split(/\r?\n/).filter(l => l.trim());
+  pendingIn = []; $('xlPreview').innerHTML = ''; $('xlApply').classList.add('hidden'); $('xlForceBox').classList.add('hidden');
+  const force = $('xlForce').checked;
+  if (!lines.length) { showMsg('xl', 'Önce Excel satırlarını yapıştırın.', 'err'); return; }
+  let hi = -1, d = '\t';
+  for (let i = 0; i < lines.length && hi < 0; i++) {
+    const dl = lines[i].indexOf('\t') >= 0 ? '\t' : (lines[i].indexOf(';') >= 0 ? ';' : ',');
+    const h = splitLine(lines[i], dl).map(nz);
+    if (h.some(c => c.indexOf('miktar') === 0 || c.indexOf('adet') === 0) && h.some(c => c.indexOf('barkod') === 0 || c.indexOf('ürün') === 0 || c.indexOf('malın') === 0)) { hi = i; d = dl; }
+  }
+  if (hi < 0) { showMsg('xl', 'Başlık satırı bulunamadı. Başlıklarla birlikte kopyalayın (Barkod veya Ürün ve Miktar sütunları şart).', 'err', 7000); return; }
+  const h = splitLine(lines[hi], d).map(nz);
+  const fc = names => h.findIndex(c => names.some(n => c.indexOf(n) === 0));
+  const col = { bar: fc(['barkod']), name: fc(['ürün', 'malın', 'mal cinsi', 'stok adı', 'açıklama']), cost: fc(['satınalma', 'alış']), price: fc(['satış']), qty: fc(['miktar', 'adet']), inv: fc(['fatura']) };
+  lines.slice(hi + 1).forEach(line => {
+    const c = splitLine(line, d), g = i => i >= 0 ? (c[i] || '') : '';
+    let bar = g(col.bar); if (/^[\d.,]+e\+?\d+$/i.test(bar)) bar = '';
+    const name = g(col.name).replace(/\s+/g, ' ').trim();
+    if (!bar && !name) return;
+    const r = { bar: bar, name: name, qty: Math.round(parseNum(g(col.qty))), cost: parseNum(g(col.cost)), price: parseNum(g(col.price)), inv: g(col.inv).trim(), skip: true, status: '' };
+    r.dk = r.inv ? r.inv + '|' + (bar || name) : '';
+    if (!bar && isNaN(r.qty)) return;
+    if (isNaN(r.qty) || r.qty <= 0) r.status = 'Atlandı: adet geçersiz';
+    else if (r.dk && !force && invDone.indexOf(r.dk) >= 0) { r.dup = true; r.status = 'Atlandı: ' + r.inv + ' numaralı fatura bu üründe daha önce işlenmiş'; }
+    else {
+      r.key = (bar && findKey(bar)) || nameKey(name);
+      if (r.key) {
+        const oldS = expectedOf(r.key);
+        r.status = 'Raf ' + oldS + ' → ' + (oldS + r.qty);
+        if (!isNaN(r.price) && r.price > 0 && r.price !== products[r.key].price) r.status += ' · fiyat ' + products[r.key].price + ' → ' + r.price;
+        r.skip = false;
+      } else if (!name || isNaN(r.price) || r.price <= 0) r.status = 'Atlandı: yeni ürün için ad ve satış fiyatı gerekli';
+      else { r.status = 'Yeni ürün'; r.skip = false; }
+    }
+    pendingIn.push(r);
+  });
+  if (!pendingIn.length) { showMsg('xl', 'Başlıktan sonra satır bulunamadı.', 'err'); return; }
+  const t = document.createElement('table'); const tb = document.createElement('tbody');
+  pendingIn.forEach(r => {
+    const tr = document.createElement('tr');
+    const a = document.createElement('td'); a.textContent = r.name || r.bar;
+    const st = document.createElement('div'); st.className = r.skip ? 'warn' : 'code'; st.textContent = r.status; a.appendChild(st);
+    const b = document.createElement('td'); b.className = 'num'; b.textContent = isNaN(r.qty) ? '–' : String(r.qty);
+    tr.appendChild(a); tr.appendChild(b); tb.appendChild(tr);
+  });
+  t.appendChild(tb); $('xlPreview').appendChild(t);
+  if (pendingIn.some(r => r.dup) || force) $('xlForceBox').classList.remove('hidden');
+  const ok = pendingIn.filter(r => !r.skip);
+  const sum = ok.reduce((s2, r) => s2 + r.qty * toKurus(isNaN(r.cost) ? 0 : r.cost), 0);
+  showMsg('xl', ok.length + ' satır rafa eklenecek, ' + (pendingIn.length - ok.length) + ' satır atlanacak. Alış tutarı: ' + money(sum), ok.length ? 'info' : 'err', 12000);
+  if (ok.length) $('xlApply').classList.remove('hidden');
+  else if (!Object.keys(products).length) showMsg('xl', 'Bu kopyada hiç ürün yok. Önce Daha fazla > Ayarlar ve Araçlar bölümünde "Barkod, Fiyat ve Stokları Yükle"ye basın ya da ürünlerin olduğu kopyada hesap açıp buradan giriş yapın.', 'err', 15000);
+}
+
+function applyExcelIn() {
+  const rows = pendingIn.filter(r => !r.skip);
+  if (!rows.length) return;
+  lockOpening();
+  rows.forEach(r => {
+    let key = r.key || (r.bar && findKey(r.bar)) || nameKey(r.name);
+    if (!key) {
+      key = (r.bar && !products[r.bar]) ? r.bar : newAutoCode();
+      products[key] = { name: r.name, price: Math.round(r.price * 100) / 100, stock: 0 };
+    }
+    const p = products[key];
+    p.stock = (hasStock(p) ? p.stock : 0) + r.qty;
+    if (!isNaN(r.cost) && r.cost > 0) p.cost = Math.round(r.cost * 100) / 100;
+    if (!isNaN(r.price) && r.price > 0) {
+      const np = Math.round(r.price * 100) / 100;
+      if (p.price !== np) p.ph = (p.ph || []).concat([{ t: Date.now(), old: p.price, new: np }]).slice(-10);
+      p.price = np;
+    }
+    p.x = 1;
+    addLog({ type: 'in', key: key, name: p.name, qty: r.qty, price: p.price, cost: p.cost || 0 });
+    if (r.dk) invDone.push(r.dk);
+  });
+  saveJ('kantin_inv', invDone); saveProducts();
+  pendingIn = []; $('xlText').value = ''; $('xlPreview').innerHTML = ''; $('xlApply').classList.add('hidden'); $('xlForceBox').classList.add('hidden'); $('xlForce').checked = false;
+  renderCount(); renderGrid(); checkLowBanner();
+  showMsg('xl', '✅ ' + rows.length + ' satır rafa eklendi.', 'ok', 6000);
+}
+
+// ---- .xlsx dosyasını doğrudan oku (zip + XML, kütüphanesiz) ----
+async function xInflate(u8) { return new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer()); }
+async function xZip(buf) {
+  const dv = new DataView(buf), u8 = new Uint8Array(buf); let e = -1;
+  for (let i = buf.byteLength - 22; i >= Math.max(0, buf.byteLength - 70000); i--) if (dv.getUint32(i, true) === 0x06054b50) { e = i; break; }
+  if (e < 0) throw new Error('zip');
+  const n = dv.getUint16(e + 10, true); let p = dv.getUint32(e + 16, true); const files = {};
+  for (let i = 0; i < n; i++) {
+    if (dv.getUint32(p, true) !== 0x02014b50) break;
+    const m = dv.getUint16(p + 10, true), cs = dv.getUint32(p + 20, true), nl = dv.getUint16(p + 28, true), el = dv.getUint16(p + 30, true), cl = dv.getUint16(p + 32, true), lo = dv.getUint32(p + 42, true);
+    const name = new TextDecoder().decode(u8.subarray(p + 46, p + 46 + nl));
+    files[name] = { m: m, cs: cs, lo: lo }; p += 46 + nl + el + cl;
+  }
+  return async name => {
+    const f = files[name]; if (!f) return null;
+    const ds = f.lo + 30 + dv.getUint16(f.lo + 26, true) + dv.getUint16(f.lo + 28, true);
+    const raw = u8.subarray(ds, ds + f.cs);
+    return new TextDecoder().decode(f.m === 0 ? raw : await xInflate(raw));
+  };
+}
+function xCol(ref) { const m = /^([A-Z]+)/.exec(ref); let n = 0; for (const c of m[1]) n = n * 26 + c.charCodeAt(0) - 64; return n - 1; }
+async function xlsxToTexts(buf) {
+  const get = await xZip(buf), dp = new DOMParser();
+  const x = async n => { const s = await get(n); return s ? dp.parseFromString(s, 'application/xml') : null; };
+  const ss = []; const sd = await x('xl/sharedStrings.xml');
+  if (sd) Array.from(sd.getElementsByTagName('si')).forEach(si => ss.push(Array.from(si.getElementsByTagName('t')).map(t => t.textContent).join('')));
+  const wb = await x('xl/workbook.xml'), rels = await x('xl/_rels/workbook.xml.rels');
+  const relMap = {}; if (rels) Array.from(rels.getElementsByTagName('Relationship')).forEach(r => { relMap[r.getAttribute('Id')] = r.getAttribute('Target'); });
+  let sheets = wb ? Array.from(wb.getElementsByTagName('sheet')).map(s => ({ name: s.getAttribute('name'), t: relMap[s.getAttribute('r:id')] || '' })) : [];
+  sheets = sheets.map(s => ({ name: s.name, path: s.t.replace(/^\//, '').replace(/^(?!xl\/)/, 'xl/') })).filter(s => s.path);
+  if (!sheets.length) sheets = [{ name: '1', path: 'xl/worksheets/sheet1.xml' }];
+  const out = [];
+  for (const sh of sheets) {
+    const d = await x(sh.path); if (!d) continue;
+    const lines = [];
+    Array.from(d.getElementsByTagName('row')).forEach(r => {
+      const cells = [];
+      Array.from(r.getElementsByTagName('c')).forEach((c, i) => {
+        const ref = c.getAttribute('r'), ci = ref ? xCol(ref) : i, t = c.getAttribute('t');
+        const v = c.getElementsByTagName('v')[0], is = c.getElementsByTagName('is')[0];
+        let s = '';
+        if (t === 's' && v) s = ss[parseInt(v.textContent, 10)] || '';
+        else if (t === 'inlineStr' && is) s = Array.from(is.getElementsByTagName('t')).map(q => q.textContent).join('');
+        else if (v) {
+          s = v.textContent;
+          if (!t || t === 'n') { if (/e/i.test(s)) { const q = Number(s); if (isFinite(q) && Math.abs(q) < 9e15 && Number.isInteger(q)) s = q.toFixed(0); } else if (/\.\d{9,}$/.test(s)) s = String(Math.round(Number(s) * 1e6) / 1e6); }
+        }
+        cells[ci] = String(s).replace(/[\t\r\n]+/g, ' ').trim();
+      });
+      let line = ''; for (let i = 0; i < cells.length; i++) line += (i ? '\t' : '') + (cells[i] || '');
+      if (line.replace(/\t/g, '').trim()) lines.push(line);
+    });
+    out.push({ name: sh.name, text: lines.join('\n') });
+  }
+  return out;
+}
+function xHasHeader(t) { return t.split('\n').some(l => { const c = l.split('\t').map(nz); return c.some(q => q.indexOf('miktar') === 0 || q.indexOf('adet') === 0) && c.some(q => q.indexOf('barkod') === 0 || q.indexOf('ürün') === 0 || q.indexOf('malın') === 0); }); }
+$('xlxFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; if (!f) return; e.target.value = '';
+  if (/\.xls$/i.test(f.name)) { showMsg('xl', 'Eski .xls biçimi okunamıyor. Excel\'de "Farklı kaydet" ile .xlsx yapıp yükleyin.', 'err', 8000); return; }
+  if (/\.(xlsx|xlsm)$/i.test(f.name)) {
+    try {
+      if (typeof DecompressionStream === 'undefined') throw new Error('ds');
+      const ab = await f.arrayBuffer(), mg = new Uint8Array(ab.slice(0, 4));
+      if (mg[0] === 0xD0 && mg[1] === 0xCF) { showMsg('xl', 'Bu dosya eski .xls biçiminde (adı .xlsx olsa bile). Excel\'de "Farklı kaydet" ile "Excel Çalışma Kitabı (.xlsx)" seçip yeniden kaydedin.', 'err', 10000); return; }
+      if (mg[0] !== 0x50 || mg[1] !== 0x4B) { const tx = new TextDecoder().decode(ab.slice(0, 4000)); if (/\t|;|,/.test(tx) && /\n/.test(tx)) { let t; try { t = new TextDecoder('utf-8', { fatal: true }).decode(ab); } catch (q) { t = new TextDecoder('windows-1254').decode(ab); } $('xlText').value = t; previewExcelIn(); return; } throw new Error('biçim tanınmadı (' + f.size + ' bayt)'); }
+      const sheets = await xlsxToTexts(ab);
+      const pick = sheets.find(s => xHasHeader(s.text));
+      if (!pick) { showMsg('xl', 'Dosyada başlık satırı bulunamadı. Başlıklarda Barkod veya Ürün ile Miktar (ya da Adet) olmalı.', 'err', 9000); return; }
+      $('xlText').value = pick.text; previewExcelIn();
+      showMsg('xl', '📄 ' + f.name + (sheets.length > 1 ? ' (sayfa: ' + pick.name + ')' : '') + ' okundu. ' + ($('xlMsg').textContent || ''), $('xlMsg').className.indexOf('err') >= 0 ? 'err' : 'info', 12000);
+    } catch (x) { showMsg('xl', 'Excel dosyası okunamadı [' + String((x && x.message) || x).slice(0, 80) + ']. Bu satırı bana yazın ya da dosyayı bana gönderin; geçici olarak satırları kopyalayıp yapıştırabilirsiniz.', 'err', 15000); }
+    return;
+  }
+  const rd = new FileReader();
+  rd.onload = () => {
+    let t;
+    try { t = new TextDecoder('utf-8', { fatal: true }).decode(rd.result); } catch (x) { t = new TextDecoder('windows-1254').decode(rd.result); }
+    $('xlText').value = t; previewExcelIn();
+  };
+  rd.readAsArrayBuffer(f);
+});
+
+function purgeNonExcel() {
+  const el = $('importMsg');
+  const say = (t, type) => { el.className = 'msg ' + type; el.textContent = t; clearTimeout(msgTimers.imp); msgTimers.imp = setTimeout(() => { el.className = 'msg'; }, 7000); };
+  const keys = Object.keys(products);
+  if (!keys.some(k => products[k].x)) { say('Önce "Barkod, Fiyat ve Stokları Yükle" ile Excel listesini yükleyin.', 'err'); return; }
+  const del = keys.filter(k => !products[k].x);
+  if (!del.length) { say('Excel dışında ürün yok.', 'info'); return; }
+  const names = del.map(k => products[k].name);
+  if (!confirm(del.length + ' ürün silinecek: ' + names.slice(0, 10).join(', ') + (names.length > 10 ? ' ...' : '') + '. Devam edilsin mi?')) return;
+  del.forEach(k => { delete products[k]; delete cart[k]; delete counts[k]; });
+  saveProducts(); saveJ('kantin_count', counts);
+  renderProductList(); renderGrid(); renderCart();
+  say('✅ ' + del.length + ' ürün silindi.', 'ok');
+}
+
+// ===== Araçlar: sipariş, rafa taşıma, veresiye, fire/iade, SKT, yedek, CSV, geri al =====
+function lossVal(kind) { return periodLogs('loss').filter(l => l.kind === kind).reduce((s, l) => s + l.qty * toKurus(l.price), 0); }
+function mkTd(t, cls) { const e = document.createElement('td'); if (cls) e.className = cls; e.textContent = t; return e; }
+function mkBtn(t, cls, fn) { const b = document.createElement('button'); b.className = 'small ' + cls; b.textContent = t; b.onclick = fn; return b; }
+function fillSel(id) {
+  const sel = $(id), cur = sel.value; sel.innerHTML = '';
+  Object.keys(products).sort((a, b) => products[a].name.localeCompare(products[b].name, 'tr')).forEach(k => {
+    const o = document.createElement('option'); o.value = k; o.textContent = products[k].name; sel.appendChild(o);
+  });
+  if (cur && products[cur]) sel.value = cur;
+}
+function setReceiptPref() { settings.showReceipt = $('setReceipt').checked; saveSet(); }
+function renderTools() {
+  fillSel('lossProduct'); fillSel('sktProduct');
+  $('setReceipt').checked = settings.showReceipt !== false;
+  if (!$('expFrom').value) $('expFrom').value = localISO(new Date(meta.start));
+  if (!$('expTo').value) $('expTo').value = localISO(new Date());
+  $('ordTh').value = settings.critTh;
+  renderOrder(); renderDebts(); renderSkt(); checkBkBanner();
+}
+
+// Sipariş
+function orderList() {
+  const th = parseInt($('ordTh').value, 10), tg = parseInt($('ordTg').value, 10), rows = [];
+  if (isNaN(th) || isNaN(tg)) return rows;
+  Object.keys(products).forEach(k => { const p = products[k]; if (!hasStock(p)) return; const tot = totalOf(k); if (tot > th) return; const n = tg - tot; if (n > 0) rows.push({ p: p, n: n }); });
+  return rows.sort((a, b) => a.p.name.localeCompare(b.p.name, 'tr'));
+}
+function ordCh() {
+  settings.critTh = parseInt($('ordTh').value, 10) || 3;
+  saveSet(); renderOrder(); checkLowBanner();
+}
+function renderOrder() {
+  const rows = orderList(), b = $('ordBody'); b.innerHTML = ''; let tot = 0;
+  rows.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.appendChild(mkTd(r.p.name)); tr.appendChild(mkTd(r.n + ' adet', 'num')); tr.appendChild(mkTd(r.p.cost ? money(r.n * toKurus(r.p.cost)) : '–', 'num'));
+    b.appendChild(tr); tot += r.n * toKurus(r.p.cost || 0);
+  });
+  $('ordTotal').textContent = rows.length ? rows.length + ' ürün · tahmini alış: ' + money(tot) : 'Sipariş gerektiren ürün yok.';
+}
+function copyOrder() { copyText(orderList().map(r => r.p.name + '\t' + r.n).join('\n')); }
+function shareOrder() {
+  const rows = orderList();
+  if (!rows.length) { showMsg('tl', 'Sipariş gerektiren ürün yok.', 'info'); return; }
+  open('https://wa.me/?text=' + encodeURIComponent('Sipariş listesi:\n' + rows.map(r => r.p.name + ' x' + r.n).join('\n')), '_blank');
+}
+function shareLow() {
+  const th = settings.critTh, tg = parseInt($('ordTg').value, 10) || 12;
+  const rows = Object.keys(products)
+    .filter(k => hasStock(products[k]) && totalOf(k) <= th)
+    .map(k => products[k].name + ' x' + Math.max(0, tg - totalOf(k)));
+  if (!rows.length) { showMsg('tl', 'Kritik stok yok.', 'info'); return; }
+  open('https://wa.me/?text=' + encodeURIComponent('Sipariş listesi (stoğu ' + th + ' ve altı):\n' + rows.join('\n')), '_blank');
+}
+
+// Veresiye
+function renderDebts() {
+  fillDebtNames();
+  const b = $('debtBody'); b.innerHTML = ''; let tot = 0;
+  Object.keys(debts).filter(n => bal(n) !== 0).sort().forEach(n => {
+    tot += bal(n);
+    const tr = document.createElement('tr');
+    const nameTd = mkTd(n);
+    nameTd.style.cursor = 'pointer';
+    nameTd.style.textDecoration = 'underline';
+    nameTd.style.color = '#1a3c6e';
+    nameTd.onclick = () => showPerson(n);
+    tr.appendChild(nameTd);
+    tr.appendChild(mkTd(money(bal(n)), 'num'));
+    const c = document.createElement('td'); c.className = 'num';
+    const inp = document.createElement('input'); inp.className = 'cin'; inp.inputMode = 'decimal'; inp.placeholder = '₺';
+    c.appendChild(inp);
+    c.appendChild(mkBtn('Ödeme', 'btn-success', () => {
+      const v = parsePrice(inp.value); if (isNaN(v) || v <= 0) return;
+      const amt = toKurus(v);
+      debts[n].push({ t: Date.now(), a: -amt }); saveJ('kantin_debt', debts); renderDebts(); renderDebtMonth();
+      if (phoneOf(n)) payThanks(n, amt);
+    }));
+    tr.appendChild(c); b.appendChild(tr);
+  });
+  $('debtTotal').textContent = tot ? 'Toplam alacak: ' + money(tot) + ' (detay için isme dokunun)' : 'Açık veresiye yok.';
+}
+
+// Veresiye kişi dökümü + WhatsApp hatırlatma
+function showPerson(n) {
+  const es = debts[n] || [];
+  let h = '<h3>📒 ' + esc(n) + '</h3><div class="total" style="font-size:18px">Bakiye: ' + money(Math.max(0, bal(n))) + '</div>';
+  if (es.length) {
+    h += '<table><thead><tr><th>Tarih</th><th class="num">Tutar</th><th>Detay</th></tr></thead><tbody>';
+    es.slice().reverse().forEach(e => {
+      const detay = e.items ? e.items.map(i => esc(i.name) + ' × ' + i.qty).join(', ') : (e.note ? esc(e.note) : (e.a < 0 ? 'Ödeme' : 'Borç'));
+      h += '<tr><td>' + new Date(e.t).toLocaleDateString('tr-TR') + '</td><td class="num ' + (e.a > 0 ? 'diff bad' : 'diff ok') + '">' + money(e.a) + '</td><td class="code">' + detay + '</td></tr>';
+    });
+    h += '</tbody></table>';
+  }
+  const ph = phoneOf(n);
+  h += '<div class="row" style="margin-top:10px"><a class="btn-wa" style="flex:1;margin-top:0" target="_blank" rel="noopener" href="' + esc(waUrl(ph, debtMsg(n))) + '">📱 WhatsApp ile Hatırlat' + (ph ? '' : ' (kişiyi siz seçin)') + '</a><button class="btn-gray" style="flex:1;margin-top:0" onclick="closeModal()">Kapat</button></div>';
+  openModal(h);
+}
+
+// Fire / İade
+function saveLoss() {
+  const k = $('lossProduct').value, p = products[k], q = parseInt($('lossQty').value, 10), kind = $('lossKind').value;
+  if (!p || isNaN(q) || q <= 0) { showMsg('tl', 'Ürün ve adet girin.', 'err'); return; }
+  const onShelf = expectedOf(k), inDepo = depoOf(k);
+  if (q > onShelf + inDepo) { showMsg('tl', 'Elde yalnızca ' + (onShelf + inDepo) + ' adet var (raf ' + onShelf + ', depo ' + inDepo + ').', 'err'); return; }
+  lockOpening();
+  const fromShelf = Math.min(onShelf, q);
+  p.stock = onShelf - fromShelf;
+  if (q > fromShelf) p.depo = inDepo - (q - fromShelf);
+  saveProducts();
+  addLog({ type: 'loss', kind: kind, key: k, name: p.name, qty: q, price: p.price });
+  $('lossQty').value = ''; renderGrid(); checkLowBanner(); checkSktBanner();
+  showMsg('tl', '✅ ' + q + ' adet ' + p.name + ' ' + kind.toLocaleLowerCase('tr-TR') + ' olarak düşüldü.', 'ok');
+}
+
+// Son kullanma tarihi
+const SKT_DAYS = 14;
+function sktDays(k) {
+  const v = products[k] && products[k].skt; if (!v) return null;
+  const pr = v.split('-').map(Number), n = new Date();
+  return Math.round((new Date(pr[0], pr[1] - 1, pr[2]).getTime() - new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime()) / 86400000);
+}
+let sktSig = '', sktDismissed = '';
+function dismissSkt() { sktDismissed = sktSig; $('sktBanner').classList.add('hidden'); }
+function checkSktBanner() {
+  if (staffNow()) { $('sktBanner').classList.add('hidden'); return; }
+  const list = Object.keys(products).filter(k => products[k].skt && totalOf(k) > 0 && sktDays(k) <= SKT_DAYS)
+    .sort((a, b) => sktDays(a) - sktDays(b));
+  const b = $('sktBanner');
+  sktSig = list.map(k => k + ':' + products[k].skt).join('|');
+  if (!list.length || sktSig === sktDismissed) { b.classList.add('hidden'); return; }
+  const exp = list.filter(k => sktDays(k) < 0).length;
+  $('sktBannerText').textContent = list.length + ' üründe son kullanma tarihi ' + SKT_DAYS + ' gün içinde' + (exp ? ' (' + exp + ' tanesi geçmiş)' : '') + ': ' +
+    list.slice(0, 4).map(k => products[k].name + ' (' + (sktDays(k) < 0 ? 'geçti' : sktDays(k) + ' gün') + ')').join(', ') + (list.length > 4 ? ' ...' : '');
+  b.classList.remove('hidden');
+}
+function saveSkt() {
+  const k = $('sktProduct').value, v = $('sktDate').value;
+  if (!products[k] || !v) { showMsg('tl', 'Ürün ve tarih seçin.', 'err'); return; }
+  products[k].skt = v; saveProducts(); $('sktDate').value = ''; renderSkt(); checkSktBanner();
+}
+function renderSkt() {
+  const b = $('sktBody'); b.innerHTML = '';
+  const n = new Date(), t0 = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+  Object.keys(products).filter(k => products[k].skt).map(k => {
+    const pr = products[k].skt.split('-').map(Number);
+    return { k: k, days: Math.round((new Date(pr[0], pr[1] - 1, pr[2]).getTime() - t0) / 86400000) };
+  }).sort((a, c) => a.days - c.days).forEach(r => {
+    const tr = document.createElement('tr'); tr.appendChild(mkTd(products[r.k].name));
+    const c = mkTd(r.days < 0 ? Math.abs(r.days) + ' gün geçti' : r.days + ' gün', 'num diff ' + (r.days <= SKT_DAYS ? 'bad' : 'ok'));
+    const x = document.createElement('td'); x.className = 'num';
+    x.appendChild(mkBtn('Sil', 'btn-danger', () => { delete products[r.k].skt; saveProducts(); renderSkt(); checkSktBanner(); }));
+    tr.appendChild(c); tr.appendChild(x); b.appendChild(tr);
+  });
+}
+
+// Yedek + otomatik yedek hatırlatma
+function checkBkBanner() {
+  if (staffNow() || cloudActive()) { $('bkBanner').classList.add('hidden'); return; }
+  const due = settings.salesSinceBk >= 100 || (Date.now() - (settings.lastBackup || 0)) > 7 * 864e5;
+  $('bkBanner').classList.toggle('hidden', !due);
+}
+function backupData() {
+  const o = {};
+  for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.indexOf('kantin_') === 0 && CLOUD_PRIVATE.indexOf(k) < 0) o[k] = localStorage.getItem(k); }
+  return JSON.stringify(o);
+}
+function backupDownload() {
+  const t = backupData(); $('bkText').value = t;
+  settings.lastBackup = Date.now(); settings.salesSinceBk = 0; saveSet(); checkBkBanner();
+  download('kantin-yedek-' + localISO(new Date()) + '.json', t, 'application/json');
+  showMsg('tl', 'Yedek hazır. Dosya inmediyse kutudaki metni kopyalayıp güvenli bir yere kaydedin.', 'info', 8000);
+}
+function backupRestore() {
+  let o; try { o = JSON.parse($('bkText').value); } catch (e) { showMsg('tl', 'Yedek metni okunamadı.', 'err'); return; }
+  const ks = Object.keys(o || {}).filter(k => k.indexOf('kantin_') === 0 && CLOUD_PRIVATE.indexOf(k) < 0);
+  if (!ks.length) { showMsg('tl', 'Geçerli yedek bulunamadı.', 'err'); return; }
+  if (!confirm('Cihazdaki veriler yedekteki verilerle değiştirilecek. Devam edilsin mi?')) return;
+  ks.forEach(k => localStorage.setItem(k, o[k])); location.reload();
+}
+$('bkFile').addEventListener('change', e => {
+  const f = e.target.files[0]; if (!f) return;
+  const r = new FileReader(); r.onload = () => { $('bkText').value = r.result; showMsg('tl', 'Dosya okundu. Geri yüklemek için düğmeye basın.', 'info'); };
+  r.readAsText(f); e.target.value = '';
+});
+
+// Kritik stok uyarısı (açılışta)
+let lowSig = '', lowDismissed = '';
+function dismissLow() { lowDismissed = lowSig; $('lowBanner').classList.add('hidden'); }
+function checkLowBanner() {
+  if (staffNow()) { $('lowBanner').classList.add('hidden'); return; }
+  const th = settings.critTh;
+  const low = Object.keys(products).filter(k => hasStock(products[k]) && totalOf(k) <= th);
+  const b = $('lowBanner');
+  lowSig = low.slice().sort().join('|');
+  if (low.length && lowSig !== lowDismissed) {
+    b.classList.remove('hidden');
+    $('lowBannerText').textContent = low.length + ' ürünün stoğu ' + th + ' ve altında: ' +
+      low.slice(0, 5).map(k => products[k].name).join(', ') + (low.length > 5 ? ' ...' : '');
+  } else b.classList.add('hidden');
+}
+
+function copyText(t, mode) {
+  const fb = () => { const a = document.createElement('textarea'); a.value = t; document.body.appendChild(a); a.select();
+    try { document.execCommand('copy'); showMsg(mode || 'tl', 'Kopyalandı.', 'ok'); } catch (e) { showMsg(mode || 'tl', 'Kopyalanamadı.', 'err'); } a.remove(); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(() => showMsg(mode || 'tl', 'Kopyalandı.', 'ok'), fb); else fb();
+}
+function download(name, text, mime) {
+  try { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: mime })); a.download = name; document.body.appendChild(a); a.click(); a.remove(); } catch (e) {}
+}
+
+// CSV yardımcıları: barkod Excel'de 8,68E+12 olmasın diye metin yapılır
+const bc = c => ({ txt: String(c) });
+function csvCell(v) {
+  if (v && typeof v === 'object') return '="' + v.txt + '"';
+  if (typeof v === 'number') return String(Math.round(v * 100) / 100).replace('.', ',');
+  const t = String(v == null ? '' : v);
+  return (t.indexOf(';') >= 0 || t.indexOf('"') >= 0 || t.indexOf('\n') >= 0) ? '"' + t.replace(/"/g, '""') + '"' : t;
+}
+function tsvCell(v) {
+  if (v && typeof v === 'object') return v.txt;
+  if (typeof v === 'number') return String(Math.round(v * 100) / 100).replace('.', ',');
+  return String(v == null ? '' : v).replace(/[\t\r\n]+/g, ' ');
+}
+function sendTable(fileName, rows, msgMode, info) {
+  download(fileName, '\uFEFF' + rows.map(r => r.map(csvCell).join(';')).join('\r\n'), 'text/csv;charset=utf-8');
+  copyText(rows.map(r => r.map(tsvCell).join('\t')).join('\n'));
+  showMsg(msgMode, info + " Dosya inmediyse panoya kopyalandı, Excel'e yapıştırabilirsiniz.", 'info', 8000);
+}
+
+// Sayımı CSV'ye aktar
+function exportCount() {
+  const c = calc();
+  const rows = [['Barkod', 'Ürün', 'Satış Fiyatı', 'Beklenen (raf)', 'Sayılan (raf)', 'Fark', 'Tutar']];
+  Object.keys(products).sort((a, b) => products[a].name.localeCompare(products[b].name, 'tr')).forEach(k => {
+    const p = products[k], e = expectedOf(k), n = counts[k] === undefined ? e : counts[k];
+    rows.push([bc(k), p.name, p.price, e, n, n - e, n * p.price]);
+  });
+  rows.push([]);
+  [['Devreden mal', c.A], ['Ay içinde giren mal', c.B], ['İade mal', c.I], ['Toplam mal', c.A + c.B - c.I], ['Sayılan mal', c.C], ['Fire', c.F], ['Olması gereken hasılat', c.A + c.B - c.I - c.C - c.F]]
+    .forEach(r => rows.push([r[0], '', '', '', '', '', '', r[1] / 100]));
+  sendTable('sayim-' + localISO(new Date()) + '.csv', rows, 'cnt', 'CSV hazırlandı.');
+}
+
+// Satış raporu CSV (seçili tarih aralığı)
+function exportSales() {
+  const pd = v => v.split('-').map(Number);
+  const fv = $('expFrom').value, tv = $('expTo').value;
+  const from = fv ? new Date(pd(fv)[0], pd(fv)[1] - 1, pd(fv)[2]).getTime() : meta.start;
+  const to = tv ? new Date(pd(tv)[0], pd(tv)[1] - 1, pd(tv)[2] + 1).getTime() : Date.now() + 1;
+  if (from >= to) { showMsg('tl', 'Başlangıç tarihi bitiş tarihinden sonra olamaz.', 'err'); return; }
+  const ls = logs.filter(l => l.type === 'sale' && l.t >= from && l.t < to).sort((a, b) => a.t - b.t);
+  if (!ls.length) { showMsg('tl', 'Bu tarih aralığında kayıtlı satış yok.', 'info'); return; }
+  const rows = [['Tarih', 'Saat', 'Barkod', 'Ürün', 'Adet', 'Birim Fiyat', 'Tutar', 'Veresiye']];
+  let q = 0, sum = 0;
+  ls.forEach(l => {
+    const d = new Date(l.t), line = l.qty * l.price;
+    q += l.qty; sum += line;
+    rows.push([d.toLocaleDateString('tr-TR'), d.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }), bc(l.key), l.name, l.qty, l.price, line, l.debt || '']);
+  });
+  rows.push([]); rows.push(['Toplam', '', '', '', q, '', sum, '']);
+  sendTable('satis-' + localISO(new Date(from)) + '_' + localISO(new Date(to - 1)) + '.csv', rows, 'tl', ls.length + ' satış satırı hazırlandı.');
+}
+
+// Son satışı geri al
+function undoSale() {
+  const mine = staffNow(), me = actor(), t0 = new Date(); t0.setHours(0, 0, 0, 0);
+  const last = logs.filter(l => l.type === 'sale' && (!mine || (l.by === me && l.t >= t0.getTime()))).pop();
+  if (!last) { showMsg('cart', mine ? 'Geri alınacak kendi satışınız yok (bugün sattığınız).' : 'Geri alınacak satış yok.', 'err'); return; }
+  const g = logs.filter(l => l.type === 'sale' && (last.sid ? l.sid === last.sid : l.id === last.id));
+  const tot = g.reduce((s, l) => s + l.qty * toKurus(l.price), 0);
+  if (!confirm('Son satış (' + money(tot) + ') geri alınsın mı? Stoklar geri eklenir.')) return;
+  g.forEach(l => { if (products[l.key] && hasStock(products[l.key])) products[l.key].stock += l.qty; });
+  if (last.debt && debts[last.debt]) { debts[last.debt].push({ t: Date.now(), a: -tot, note: 'Satış iptali' }); saveJ('kantin_debt', debts); }
+  logs = logs.filter(l => g.indexOf(l) < 0); saveJ('kantin_log', logs);
+  addLog({ type: 'void', ob: last.by || undefined, debt: last.debt || undefined, tot: tot, txt: g.map(l => l.name + ' ×' + l.qty).join(', ') });
+  saveProducts(); renderGrid(); renderRecent(); checkLowBanner();
+  showMsg('cart', '↩️ Satış geri alındı.', 'ok');
+}
+
+// ===== WhatsApp mesajları + müşteri kaydı =====
+// Not: Uygulama mesajı hazırlar ve WhatsApp'ı hazır metinle açar; "Gönder"e siz basarsınız.
+let customers = loadJ('kantin_cust', {});   // {ad: {phone:'90532...', limit: ₺, lastRem: zaman}}
+function saveCustomers() { saveJ('kantin_cust', customers); }
+const TPL_DEF = {
+  borc: 'Merhaba {ad}, kantin veresiye borcunuz {borc}. Uygun olduğunuzda ödeyebilirsiniz. Teşekkürler. 🙏',
+  satis: 'Merhaba {ad}, {tarih} alışverişiniz:\n{kalemler}\nToplam: {toplam}\n{bakiye}',
+  odeme: 'Merhaba {ad}, {odeme} ödemeniz alındı, teşekkürler. 🙏\n{bakiye}',
+  duyuru: 'Merhaba {ad}, kantinimizde yeni ürünler var. Bekleriz! 🙂'
+};
+function tplOf(k) { return (settings.tpl && settings.tpl[k]) || TPL_DEF[k]; }
+function fillTpl(t, v) {
+  return String(t).replace(/\{(\w+)\}/g, (m, k) => v[k] == null ? '' : v[k]).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+function customerKey(name) {
+  if (!name) return null;
+  if (customers[name]) return name;
+  const n = nz(name);
+  return Object.keys(customers).find(k => nz(k) === n) || null;
+}
+function phoneOf(name) { const k = customerKey(name); return (k && customers[k].phone) || ''; }
+function normPhone(raw) {
+  let d = String(raw == null ? '' : raw).replace(/\D/g, '');
+  if (d.indexOf('00') === 0) d = d.slice(2);
+  if (d.length === 11 && d[0] === '0') d = '90' + d.slice(1);
+  else if (d.length === 10 && d[0] === '5') d = '90' + d;
+  if (/^905\d{9}$/.test(d)) return d;
+  if (d.length >= 11 && d.length <= 15 && d[0] !== '0' && d.indexOf('90') !== 0) return d;   // yurt dışı numara
+  return '';
+}
+function fmtPhone(p) {
+  if (/^905\d{9}$/.test(p)) return '0' + p.slice(2, 5) + ' ' + p.slice(5, 8) + ' ' + p.slice(8, 10) + ' ' + p.slice(10);
+  return '+' + p;
+}
+function waUrl(phone, text) { return 'https://wa.me/' + (phone || '') + '?text=' + encodeURIComponent(text); }
+function waOpen(url) { try { window.open(url, '_blank'); } catch (e) {} }
+function fillDebtNames() {
+  const dl = $('debtNames'); dl.innerHTML = '';
+  const seen = {};
+  Object.keys(debts).concat(Object.keys(customers)).forEach(n => {
+    if (seen[n]) return; seen[n] = 1;
+    const o = document.createElement('option'); o.value = n; dl.appendChild(o);
+  });
+}
+
+// --- Mesaj metinleri
+function balText(n) { const b = bal(n); return b > 0 ? 'Güncel veresiye borcunuz: ' + money(b) : ''; }
+function baseVars(n) { return { ad: n, borc: money(Math.max(0, bal(n))), bakiye: balText(n), tarih: new Date().toLocaleDateString('tr-TR') }; }
+function saleMsg(n, t, lines, total) {
+  const v = baseVars(n);
+  v.tarih = new Date(t).toLocaleDateString('tr-TR');
+  v.kalemler = lines.map(l => '• ' + l.name + ' × ' + l.qty + ' = ' + money(toKurus(l.price) * l.qty)).join('\n');
+  v.toplam = money(total);
+  return fillTpl(tplOf('satis'), v);
+}
+function debtMsg(n) { return fillTpl(tplOf('borc'), baseVars(n)); }
+function payMsg(n, amt) { const v = baseVars(n); v.odeme = money(amt); return fillTpl(tplOf('odeme'), v); }
+function waSaleButton(cust, sid, lines, total) {
+  const k = customerKey(cust); if (!k) return '';
+  const ph = customers[k].phone;
+  if (!ph) return '<p class="hint" style="margin-top:8px">' + esc(k) + ' için telefon kayıtlı değil (Mesaj sekmesinden ekleyin).</p>';
+  return '<a class="btn-wa" target="_blank" rel="noopener" href="' + esc(waUrl(ph, saleMsg(k, sid, lines, total))) + '">📱 ' + esc(k) + ' kişisine WhatsApp ile gönder</a>';
+}
+function payThanks(n, amt) {
+  const text = payMsg(n, amt);
+  openModal('<h3>✅ Ödeme alındı</h3><div class="code">' + esc(n) + '</div><div class="msgprev">' + esc(text) + '</div>' +
+    '<a class="btn-wa" target="_blank" rel="noopener" href="' + esc(waUrl(phoneOf(n), text)) + '">📱 Teşekkür mesajını gönder</a>' +
+    '<button class="btn-gray" onclick="closeModal()">Kapat</button>');
+}
+
+// --- Sekme
+function openMsgTab() {
+  $('tplBorc').value = tplOf('borc'); $('tplSatis').value = tplOf('satis'); $('tplOdeme').value = tplOf('odeme');
+  $('annText').value = tplOf('duyuru');
+  $('setAutoWa').checked = !!settings.autoWa;
+  if (!$('dsDate').value) $('dsDate').value = localISO(new Date());
+  if (!$('dsPhone').value && settings.ownPhone) $('dsPhone').value = fmtPhone(settings.ownPhone);
+  renderMsgTab();
+}
+function renderMsgTab() { renderCustList(); renderRem(); updAnnInfo(); renderDaySummaryPreview(); }
+
+// --- Müşteri kaydı
+let cuEditing = null;
+function saveCustomer() {
+  const name = $('cuName').value.trim(), raw = $('cuPhone').value.trim(), lim = $('cuLimit').value.trim();
+  if (!name) { showMsg('wm', 'Ad soyad girin.', 'err'); return; }
+  let phone = '';
+  if (raw) {
+    phone = normPhone(raw);
+    if (!phone) { showMsg('wm', 'Geçerli bir cep telefonu girin (örn. 0532 123 45 67).', 'err', 5000); return; }
+  }
+  let limit = 0;
+  if (lim) {
+    limit = parsePrice(lim);
+    if (isNaN(limit) || limit < 0) { showMsg('wm', 'Limit için geçerli bir tutar girin.', 'err'); return; }
+  }
+  const existing = customerKey(name);
+  if (!cuEditing && existing) { showMsg('wm', 'Bu isimde müşteri zaten kayıtlı: ' + existing, 'err'); return; }
+  const key = cuEditing || name;
+  if (phone) {
+    const dup = Object.keys(customers).find(k => customers[k].phone === phone && k !== key);
+    if (dup) { showMsg('wm', 'Bu numara zaten ' + dup + ' adına kayıtlı.', 'err', 5000); return; }
+  }
+  customers[key] = Object.assign({}, customers[key], { phone: phone, limit: limit });
+  saveCustomers(); cancelCustomerEdit(); fillDebtNames(); renderMsgTab();
+  showMsg('wm', '✅ ' + key + ' kaydedildi.', 'ok');
+}
+function editCustomer(k) {
+  cuEditing = k;
+  $('cuName').value = k; $('cuName').disabled = true;
+  $('cuPhone').value = customers[k].phone ? fmtPhone(customers[k].phone) : '';
+  $('cuLimit').value = customers[k].limit ? String(customers[k].limit).replace('.', ',') : '';
+  $('cuSave').textContent = 'Değişiklikleri Kaydet';
+  $('cuCancel').classList.remove('hidden');
+  $('cuPhone').focus();
+}
+function cancelCustomerEdit() {
+  cuEditing = null;
+  $('cuName').value = ''; $('cuName').disabled = false; $('cuPhone').value = ''; $('cuLimit').value = '';
+  $('cuSave').textContent = 'Müşteriyi Kaydet';
+  $('cuCancel').classList.add('hidden');
+}
+function prefillCustomer(name) {
+  cancelCustomerEdit();
+  $('cuName').value = name;
+  $('cuPhone').focus();
+  try { $('cuName').scrollIntoView({ block: 'center' }); } catch (e) {}
+  showMsg('wm', name + ' için telefon numarasını girip kaydedin.', 'info');
+}
+function deleteCustomer(k) {
+  if (!confirm(k + ' kaydı silinsin mi? (Veresiye borcu silinmez.)')) return;
+  delete customers[k]; saveCustomers(); fillDebtNames(); renderMsgTab();
+}
+function renderCustList() {
+  const box = $('custList'); box.innerHTML = '';
+  const keys = Object.keys(customers).sort((a, b) => a.localeCompare(b, 'tr'));
+  if (!keys.length) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'Henüz müşteri kaydı yok.'; box.appendChild(p); return; }
+  const t = document.createElement('table'), tb = document.createElement('tbody');
+  keys.forEach(k => {
+    const c = customers[k], tr = document.createElement('tr');
+    const a = document.createElement('td');
+    const nm = document.createElement('div'); nm.textContent = k;
+    const info = document.createElement('div'); info.className = 'code';
+    info.textContent = (c.phone ? fmtPhone(c.phone) : 'Telefon yok') + (c.limit > 0 ? ' · Limit: ' + money(toKurus(c.limit)) : '') + (bal(k) > 0 ? ' · Borç: ' + money(bal(k)) : '');
+    a.appendChild(nm); a.appendChild(info);
+    const b = document.createElement('td'); b.className = 'actions';
+    if (c.phone) b.appendChild(mkBtn('📱', 'btn-success', () => composeMsg(k)));
+    b.appendChild(mkBtn('Düzenle', 'btn-primary', () => editCustomer(k)));
+    b.appendChild(mkBtn('Sil', 'btn-danger', () => deleteCustomer(k)));
+    tr.appendChild(a); tr.appendChild(b); tb.appendChild(tr);
+  });
+  t.appendChild(tb); box.appendChild(t);
+}
+
+// --- Serbest mesaj penceresi
+let cmCur = null;
+function composeMsg(k) {
+  cmCur = k;
+  openModal('<h3>📱 ' + esc(k) + '</h3><div class="code">' + esc(fmtPhone(customers[k].phone)) + '</div>' +
+    '<select id="cmTpl" style="margin-top:8px"><option value="borc">Borç hatırlatma</option><option value="duyuru">Duyuru</option><option value="">Boş mesaj</option></select>' +
+    '<textarea class="mt" id="cmText" rows="5" style="margin-top:8px"></textarea>' +
+    '<a class="btn-wa" id="cmGo" target="_blank" rel="noopener" href="#">📱 WhatsApp\'ı Aç</a>' +
+    '<div class="row" style="margin-top:8px"><button class="btn-gray" id="cmCopy" style="flex:1;margin-top:0">Kopyala</button><button class="btn-gray" style="flex:1;margin-top:0" onclick="closeModal()">Kapat</button></div>');
+  const fill = () => {
+    const v = $('cmTpl').value;
+    $('cmText').value = v === 'borc' ? debtMsg(k) : (v === 'duyuru' ? fillTpl(tplOf('duyuru'), baseVars(k)) : '');
+    link();
+  };
+  const link = () => { $('cmGo').href = waUrl(customers[k].phone, $('cmText').value); };
+  $('cmTpl').onchange = fill; $('cmText').oninput = link;
+  $('cmGo').onclick = () => { if ($('cmTpl').value === 'borc') { customers[k].lastRem = Date.now(); saveCustomers(); renderRem(); } };
+  $('cmCopy').onclick = () => { copyText($('cmText').value, 'wm'); $('cmCopy').textContent = '✓ Kopyalandı'; };
+  fill();
+}
+
+// --- Borç hatırlatma
+function debtAgeDays(n) {
+  const q = [];
+  (debts[n] || []).forEach(e => {
+    if (e.a > 0) q.push({ t: e.t, a: e.a });
+    else {
+      let r = -e.a;
+      while (r > 0 && q.length) { const x = q[0]; if (x.a <= r) { r -= x.a; q.shift(); } else { x.a -= r; r = 0; } }
+    }
+  });
+  return q.length ? Math.max(0, Math.floor((Date.now() - q[0].t) / 86400000)) : 0;
+}
+function remDebtors() {
+  const minAge = parseInt($('remAge').value, 10) || 0;
+  return Object.keys(debts).filter(n => bal(n) > 0 && debtAgeDays(n) >= minAge)
+    .sort((a, b) => debtAgeDays(b) - debtAgeDays(a) || bal(b) - bal(a));
+}
+function markReminded(n) { const k = customerKey(n); if (k) { customers[k].lastRem = Date.now(); saveCustomers(); } }
+function renderRem() {
+  const b = $('remBody'); b.innerHTML = '';
+  const list = remDebtors();
+  let withPhone = 0, noPhone = 0, tot = 0;
+  list.forEach(n => {
+    const ph = phoneOf(n), k = customerKey(n);
+    tot += bal(n); if (ph) withPhone++; else noPhone++;
+    const tr = document.createElement('tr');
+    const a = document.createElement('td');
+    const nm = document.createElement('div'); nm.textContent = n;
+    const info = document.createElement('div'); info.className = 'code';
+    const age = debtAgeDays(n);
+    info.textContent = (age > 0 ? age + ' gündür açık' : 'bugün') + (k && customers[k].lastRem ? ' · son hatırlatma: ' + fmtDate(customers[k].lastRem) : '');
+    a.appendChild(nm); a.appendChild(info);
+    const c = document.createElement('td'); c.className = 'num'; c.textContent = money(bal(n));
+    const d = document.createElement('td'); d.className = 'actions';
+    if (ph) d.appendChild(mkBtn('📱 Hatırlat', 'btn-success', () => { markReminded(n); waOpen(waUrl(ph, debtMsg(n))); renderRem(); }));
+    else d.appendChild(mkBtn('Telefon ekle', 'btn-gray', () => prefillCustomer(n)));
+    tr.appendChild(a); tr.appendChild(c); tr.appendChild(d); b.appendChild(tr);
+  });
+  $('remInfo').textContent = list.length
+    ? withPhone + ' kişiye hatırlatma gönderilebilir' + (noPhone ? ', ' + noPhone + ' kişinin telefonu kayıtlı değil' : '') + '. Toplam alacak: ' + money(tot)
+    : 'Bu filtreye uyan açık veresiye yok.';
+}
+function startDebtQueue() {
+  const items = remDebtors().filter(n => phoneOf(n)).map(n => ({ name: n, phone: phoneOf(n), text: debtMsg(n), onSent: () => markReminded(n) }));
+  startQueue('📒 Borç hatırlatma', items);
+}
+
+// --- Duyuru
+function annRecipients() {
+  const onlyDebt = $('annAud').value === 'debt';
+  return Object.keys(customers).filter(k => customers[k].phone && (!onlyDebt || bal(k) > 0));
+}
+function updAnnInfo() {
+  const n = annRecipients().length;
+  $('annInfo').textContent = n ? n + ' kişiye gönderilecek (telefonu kayıtlı olanlar).' : 'Gönderilecek kişi yok. Önce telefon numaralı müşteri kaydedin.';
+}
+function startAnnQueue() {
+  const text = $('annText').value.trim();
+  if (!text) { showMsg('wm', 'Duyuru metnini yazın.', 'err'); return; }
+  settings.tpl = Object.assign({}, settings.tpl, { duyuru: text }); saveSet();
+  startQueue('📣 Duyuru', annRecipients().map(k => ({ name: k, phone: customers[k].phone, text: fillTpl(text, baseVars(k)) })));
+}
+
+// --- Sırayla gönderme penceresi
+let qState = null;
+function startQueue(title, items) {
+  if (!items.length) { showMsg('wm', 'Gönderilecek kişi yok.', 'info'); return; }
+  qState = { title: title, items: items, i: 0, sent: 0 };
+  renderQueue();
+}
+function renderQueue() {
+  const q = qState; if (!q) return;
+  const it = q.items[q.i];
+  if (!it) {
+    openModal('<h3>✅ Tamamlandı</h3><p>' + q.sent + ' / ' + q.items.length + ' kişi için WhatsApp açıldı.</p><button class="btn-gray" onclick="closeModal()">Kapat</button>');
+    qState = null; renderRem(); return;
+  }
+  openModal('<h3>' + esc(q.title) + '</h3><div class="code">' + (q.i + 1) + ' / ' + q.items.length + '</div>' +
+    '<div style="font-weight:bold;margin-top:6px">' + esc(it.name) + '</div><div class="code">' + esc(fmtPhone(it.phone)) + '</div>' +
+    '<div class="msgprev">' + esc(it.text) + '</div>' +
+    '<a class="btn-wa" id="qGo" target="_blank" rel="noopener" href="' + esc(waUrl(it.phone, it.text)) + '">📱 WhatsApp\'ı Aç</a>' +
+    '<div class="row" style="margin-top:8px"><button class="btn-gray" id="qSkip" style="flex:1;margin-top:0">Atla</button><button class="btn-gray" id="qCopy" style="flex:1;margin-top:0">Kopyala</button><button class="btn-danger" id="qStop" style="flex:1;margin-top:0">Bitir</button></div>' +
+    '<p class="hint" style="margin-top:8px">WhatsApp açılınca "Gönder"e basın, sonra uygulamaya dönüp sıradakine geçin.</p>');
+  $('qGo').onclick = () => { q.sent++; if (it.onSent) it.onSent(); setTimeout(() => { q.i++; renderQueue(); }, 400); };
+  $('qSkip').onclick = () => { q.i++; renderQueue(); };
+  $('qCopy').onclick = () => { copyText(it.text, 'wm'); $('qCopy').textContent = '✓ Kopyalandı'; };
+  $('qStop').onclick = () => { qState = null; closeModal(); renderRem(); };
+}
+
+// --- Günün özeti
+function daySummaryText(dateStr) {
+  const pr = dateStr.split('-').map(Number);
+  const ls = daySales(pr[0], pr[1] - 1, pr[2]);
+  let total = 0, items = 0, credit = 0, profit = 0; const agg = {};
+  ls.forEach(l => {
+    const line = l.qty * toKurus(l.price); total += line; items += l.qty;
+    if (l.debt) credit += line;
+    const c = products[l.key] && products[l.key].cost; if (c) profit += line - l.qty * toKurus(c);
+    agg[l.name] = (agg[l.name] || 0) + l.qty;
+  });
+  const top = Object.keys(agg).sort((a, b) => agg[b] - agg[a]).slice(0, 3).map(n => n + ' (' + agg[n] + ')');
+  const low = Object.keys(products).filter(k => hasStock(products[k]) && totalOf(k) <= settings.critTh);
+  let open = 0; Object.keys(debts).forEach(n => { open += Math.max(0, bal(n)); });
+  let t = '📊 Kantin günlük özet — ' + new Date(pr[0], pr[1] - 1, pr[2]).toLocaleDateString('tr-TR') +
+    '\nSatış: ' + money(total) + ' (' + items + ' adet)' +
+    '\nNakit: ' + money(total - credit) + ' · Veresiye: ' + money(credit) +
+    '\nTahmini kâr: ' + money(profit);
+  if (top.length) t += '\nEn çok satan: ' + top.join(', ');
+  t += '\nAçık veresiye alacağı: ' + money(open);
+  if (low.length) t += '\nAzalan stok: ' + low.length + ' ürün (' + low.slice(0, 5).map(k => products[k].name).join(', ') + (low.length > 5 ? ' ...' : '') + ')';
+  return t;
+}
+function renderDaySummaryPreview() { $('dsPrev').textContent = daySummaryText($('dsDate').value || localISO(new Date())); }
+function shareDaySummary() {
+  const raw = $('dsPhone').value.trim();
+  let phone = '';
+  if (raw) {
+    phone = normPhone(raw);
+    if (!phone) { showMsg('wm', 'Geçerli bir cep telefonu girin ya da boş bırakın.', 'err'); return; }
+    settings.ownPhone = phone; saveSet();
+  }
+  waOpen(waUrl(phone, daySummaryText($('dsDate').value || localISO(new Date()))));
+}
+
+// --- Ayarlar ve şablonlar
+function setAutoWaPref() { settings.autoWa = $('setAutoWa').checked; saveSet(); }
+function saveTemplates() {
+  const b = $('tplBorc').value.trim(), s2 = $('tplSatis').value.trim(), o = $('tplOdeme').value.trim();
+  if (!b || !s2 || !o) { showMsg('wm', 'Şablonlar boş olamaz.', 'err'); return; }
+  settings.tpl = Object.assign({}, settings.tpl, { borc: b, satis: s2, odeme: o }); saveSet();
+  showMsg('wm', '✅ Şablonlar kaydedildi.', 'ok');
+}
+function resetTemplates() {
+  if (!confirm('Tüm mesaj şablonları varsayılana dönsün mü?')) return;
+  delete settings.tpl; saveSet(); openMsgTab();
+  showMsg('wm', 'Şablonlar varsayılana döndü.', 'ok');
+}
+
+// ===== Bulut hesabı (Firebase REST: kullanıcı girişi + cihazlar arası eşitleme) =====
+// Sunucu ayarı boşsa uygulama eskisi gibi yalnızca bu telefonda çalışır.
+const CLOUD_DEFAULT = { apiKey: 'AIzaSyB9Tp9xd-Kfj1xpNJpWZ_pvcZDSVDmDVDM', databaseURL: 'https://kantingelismis-default-rtdb.europe-west1.firebasedatabase.app' };   // İsterseniz Firebase ayarlarını buraya yazabilirsiniz
+const CLOUD_PRIVATE = ['kantin_auth', 'kantin_cloudbase', 'kantin_cloudcfg', 'kantin_prelogin'];   // yedeğe girmez
+const SYNC_KEYS = ['kantin_log', 'kantin_debt', 'kantin_cust', 'kantin_count', 'kantin_hist', 'kantin_inv', 'kantin_meta'];
+const STAFF_PREFIX = ['products/', 'stk/', 'log/', 'logdel/', 'debt/'];
+const OWNER_COLS = ['products', 'stk', 'cost', 'debt', 'cust', 'count', 'hist', 'inv', 'logdel'];
+const STAFF_COLS = ['products', 'stk', 'debt', 'cust', 'logdel'];
+const STAFF_DOMAIN = '@kantin.example.com';
+const POLL_MS = 8000;
+let cloudCfg = Object.assign({}, CLOUD_DEFAULT, loadJ('kantin_cloudcfg', null) || {});
+let cloudSess = loadJ('kantin_auth', null);   // {uid,email,refreshToken,idToken,exp,shopId,role,name}
+let cbase = loadJ('kantin_cloudbase', null);  // {uid,map:{yol:özet},bp:{yol:[stok,depo]},rev,logSt}
+const cs = { cur: null, again: false, timer: null, poll: null, state: 'off', err: '', lastOk: 0, applying: false, ask: null, tokenP: null, dirty: false };
+var curTab = 'sell';
+
+function cloudOn() { return !!(cloudCfg.apiKey && cloudCfg.databaseURL); }
+function cloudActive() { try { return !!cloudSess; } catch (e) { return false; } }
+function actor() { try { if (cloudSess) return cloudSess.role === 'owner' ? 'Sahip' : (cloudSess.name || String(cloudSess.email || '').split('@')[0]); } catch (e) {} return ''; }
+function staffNow() { try { return isStaff(); } catch (e) { return false; } }
+function isStaff() { return !!(cloudSess && cloudSess.role === 'staff'); }
+
+// ---------- yardımcılar ----------
+function ek(s) { return String(s).replace(/[%.$#\[\]\/\u0000-\u001f\u007f]/g, c => '%' + c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')); }
+function dk(s) { try { return decodeURIComponent(s); } catch (e) { return s; } }
+function prune(v) {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v === 'number') return isFinite(v) ? v : undefined;
+  if (Array.isArray(v)) { const a = v.map(prune).filter(x => x !== undefined); return a.length ? a : undefined; }
+  if (typeof v === 'object') { const o = {}; Object.keys(v).sort().forEach(k => { const x = prune(v[k]); if (x !== undefined) o[k] = x; }); return Object.keys(o).length ? o : undefined; }
+  return v;
+}
+function cval(v) { const p = prune(v); return p === undefined ? null : JSON.stringify(p); }
+function hs(str) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36) + str.length.toString(36);
+}
+function oe(d) {
+  if (d === null || d === undefined) return [];
+  if (Array.isArray(d)) { const r = []; d.forEach((v, i) => { if (v !== null && v !== undefined) r.push([String(i), v]); }); return r; }
+  if (typeof d === 'object') return Object.keys(d).map(k => [k, d[k]]);
+  return [];
+}
+function asArr(v) { if (Array.isArray(v)) return v; return oe(v).sort((a, b) => Number(a[0]) - Number(b[0])).map(x => x[1]); }
+function debtKeys(arr) { const seen = {}; return arr.filter(e => e && typeof e === 'object').map(e => { let k = String(e.t); if (seen[k]) { seen[k]++; k += '_' + seen[k]; } else seen[k] = 1; return [k, e]; }); }
+function canPush(path, role) { return role === 'owner' || STAFF_PREFIX.some(p => path.indexOf(p) === 0); }
+
+// ---------- ağ ----------
+async function cJson(u, opt) {
+  const ctl = new AbortController(); const to = setTimeout(() => ctl.abort(), 25000);
+  try {
+    const r = await fetch(u, Object.assign({ signal: ctl.signal }, opt));
+    let d = null; try { d = await r.json(); } catch (e) {}
+    return { ok: r.ok, status: r.status, data: d };
+  } catch (e) { return { ok: false, status: 0, data: null, net: true }; }
+  finally { clearTimeout(to); }
+}
+function aBase() { return cloudCfg.authBase || 'https://identitytoolkit.googleapis.com/v1'; }
+function tBase() { return cloudCfg.tokenBase || 'https://securetoken.googleapis.com/v1'; }
+function authCall(ep, body) {
+  return cJson(aBase() + '/accounts:' + ep + '?key=' + encodeURIComponent(cloudCfg.apiKey), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+}
+function authErrText(r) {
+  if (r.net) return 'Sunucuya ulaşılamadı. İnterneti kontrol edin.' + (/^(file|content):/.test(location.protocol) ? ' (Uygulama dosya olarak açıldığı için de olabilir; bir web adresinden açın.)' : '');
+  const m = String((r.data && r.data.error && r.data.error.message) || '');
+  if (/INVALID_LOGIN_CREDENTIALS|INVALID_PASSWORD|EMAIL_NOT_FOUND/.test(m)) return 'Kullanıcı adı veya şifre hatalı.';
+  if (/USER_DISABLED/.test(m)) return 'Bu hesap devre dışı bırakılmış.';
+  if (/TOO_MANY_ATTEMPTS/.test(m)) return 'Çok fazla deneme yapıldı. Biraz bekleyip tekrar deneyin.';
+  if (/EMAIL_EXISTS/.test(m)) return 'Bu kullanıcı adı veya e-posta zaten kayıtlı.';
+  if (/WEAK_PASSWORD/.test(m)) return 'Şifre en az 6 karakter olmalı.';
+  if (/INVALID_EMAIL/.test(m)) return 'Geçersiz e-posta adresi.';
+  if (/OPERATION_NOT_ALLOWED|PASSWORD_LOGIN_DISABLED/.test(m)) return "Firebase'de E-posta/Şifre girişi açık değil (Authentication > Sign-in method).";
+  if (/API key|API_KEY/i.test(m)) return 'API anahtarı geçersiz. Sunucu ayarını kontrol edin.';
+  if (/TOKEN_EXPIRED|INVALID_REFRESH_TOKEN|USER_NOT_FOUND|INVALID_ID_TOKEN/.test(m)) return 'Oturum süresi doldu. Yeniden giriş yapın.';
+  return 'Hata: ' + (m || r.status);
+}
+function dbErrText(r) {
+  if (!r) return 'Bilinmeyen hata';
+  if (r.net) return 'İnternet bağlantısı yok.';
+  if (r.auth) return r.msg || 'Oturum süresi doldu.';
+  if (r.status === 401 || r.status === 403) return 'Erişim izni yok. Firebase güvenlik kuralları yüklenmemiş ya da hatalı olabilir.';
+  if (r.status === 404) return 'Veritabanı adresi hatalı olabilir.';
+  return 'Sunucu hatası (' + r.status + ')' + (r.data && r.data.error ? ': ' + String(r.data.error).slice(0, 80) : '');
+}
+function cloudToken() {
+  if (!cloudSess) return Promise.resolve({ auth: true, msg: 'Oturum yok' });
+  if (cloudSess.idToken && Date.now() < (cloudSess.exp || 0) - 60000) return Promise.resolve({ token: cloudSess.idToken });
+  if (cs.tokenP) return cs.tokenP;
+  cs.tokenP = (async () => {
+    try {
+      const r = await cJson(tBase() + '/token?key=' + encodeURIComponent(cloudCfg.apiKey), { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: 'grant_type=refresh_token&refresh_token=' + encodeURIComponent(cloudSess.refreshToken) });
+      if (r.net) return { net: true };
+      if (!r.ok) return { auth: true, msg: authErrText(r) };
+      cloudSess.idToken = r.data.id_token; cloudSess.refreshToken = r.data.refresh_token || cloudSess.refreshToken;
+      cloudSess.exp = Date.now() + (parseInt(r.data.expires_in, 10) || 3600) * 1000;
+      saveJ('kantin_auth', cloudSess);
+      return { token: cloudSess.idToken };
+    } finally { cs.tokenP = null; }
+  })();
+  return cs.tokenP;
+}
+async function dbReq(method, path, body, query, again) {
+  const t = await cloudToken();
+  if (!t.token) return { ok: false, status: 0, net: !!t.net, auth: !!t.auth, msg: t.msg };
+  const u = cloudCfg.databaseURL.replace(/\/+$/, '') + '/' + path + '.json?auth=' + encodeURIComponent(t.token) + (query || '');
+  const opt = { method: method };
+  if (body !== undefined) { opt.headers = { 'Content-Type': 'application/json' }; opt.body = JSON.stringify(body); }
+  const r = await cJson(u, opt);
+  const em = String((r.data && r.data.error) || '');
+  if (r.status === 401 && !again && /token|auth/i.test(em) && !/permission/i.test(em)) { cloudSess.exp = 0; return dbReq(method, path, body, query, true); }
+  return r;
+}
+const dbGet = (p, q) => dbReq('GET', p, undefined, q);
+const dbPut = (p, v) => dbReq('PUT', p, v);
+const dbPatch = (p, v) => dbReq('PATCH', p, v);
+
+// ---------- durum göstergesi ----------
+function cloudState(s, err) {
+  cs.state = s; cs.err = err || '';
+  const el = $('syncLine'); if (!el) return;
+  if (!cloudOn() || !cloudSess) { el.classList.add('hidden'); return; }
+  const t = { ok: '☁️ Eşitlendi · ' + new Date(cs.lastOk || Date.now()).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }),
+    sync: '☁️ Eşitleniyor…', dirty: '☁️ Gönderilecek değişiklik var', offline: '📴 Çevrimdışı · değişiklikler kayıtlı, bağlanınca gönderilir',
+    error: '⚠️ ' + (err || 'Eşitleme hatası') }[s] || '';
+  el.textContent = t + (cloudSess.role === 'staff' ? '' : '');
+  el.className = 'syncline ' + (s === 'error' ? 'bad' : (s === 'offline' ? 'warn' : ''));
+  if (curTab === 'account') renderAccount();
+}
+
+// ---------- yerel veri → düz yol haritası ----------
+function cloudFlatLocal(role) {
+  const m = {};
+  const put = (p, v) => { const s = cval(v); if (s !== null) m[p] = s; };
+  Object.keys(products).forEach(k => {
+    if (!k) return;
+    const r = Object.assign({}, products[k]); const c = r.cost, s = r.stock, d = r.depo; delete r.cost; delete r.stock; delete r.depo;
+    put('products/' + ek(k), r);
+    const st = {}; if (typeof s === 'number' && isFinite(s)) st.s = s; if (typeof d === 'number' && isFinite(d)) st.d = d;
+    put('stk/' + ek(k), st);
+    if (role === 'owner' && c > 0) put('cost/' + ek(k), c);
+  });
+  (logs || []).forEach(l => { if (l && l.id != null) { const r = Object.assign({}, l); delete r.st; put('log/' + ek(String(l.id)), r); } });
+  Object.keys(debts).forEach(n => { if (n) debtKeys(asArr(debts[n])).forEach(x => put('debt/' + ek(n) + '/' + ek(x[0]), x[1])); });
+  Object.keys(customers).forEach(n => { if (n) put('cust/' + ek(n), customers[n]); });
+  if (role === 'owner') {
+    Object.keys(counts).forEach(k => { if (k) put('count/' + ek(k), counts[k]); });
+    hist.forEach(h => { if (h && h.t != null) put('hist/' + ek(String(h.t)), h); });
+    invDone.forEach(s => { if (s) put('inv/' + ek(s), 1); });
+    put('meta', meta);
+  }
+  return m;
+}
+
+// ---------- uzak veriyi çek ----------
+async function fetchRemote(role, shop, full) {
+  const cols = role === 'owner' ? OWNER_COLS : STAFF_COLS;
+  const jobs = cols.map(c => dbGet('shops/' + shop + '/' + c));
+  const inc = !full && cbase && cbase.logSt > 0;
+  jobs.push(dbGet('shops/' + shop + '/log', inc ? '&orderBy=%22st%22&startAt=' + Math.max(0, cbase.logSt - 5000) : ''));
+  if (role === 'owner') jobs.push(dbGet('shops/' + shop + '/meta'));
+  const rs = await Promise.all(jobs);
+  for (const r of rs) if (!r.ok) throw r;
+  const R = {}, complete = {};
+  cols.forEach((c, i) => {
+    complete[c] = true;
+    oe(rs[i].data).forEach(([k, v]) => {
+      if (c === 'logdel') { R['log/' + k] = null; return; }
+      if (c === 'debt') { oe(v).forEach(([t2, e]) => { const s2 = cval(e); if (s2 !== null) R['debt/' + k + '/' + t2] = s2; }); return; }
+      const s = cval(v); if (s !== null) R[c + '/' + k] = s;
+    });
+  });
+  let logSt = cbase ? (cbase.logSt || 0) : 0;
+  oe(rs[cols.length].data).forEach(([k, v]) => {
+    if (!v || typeof v !== 'object') return;
+    if (typeof v.st === 'number' && v.st > logSt) logSt = v.st;
+    const r = Object.assign({}, v); delete r.st;
+    const s = cval(r);
+    if (s !== null && !(('log/' + k) in R)) R['log/' + k] = s;
+  });
+  complete.log = !inc;
+  if (role === 'owner') { const s = cval(rs[cols.length + 1].data); if (s !== null) R['meta'] = s; complete.meta = true; }
+  return { R: R, complete: complete, logSt: logSt, tomb: oe(rs[cols.indexOf('logdel')].data).map(x => x[0]) };
+}
+
+// ---------- üç yönlü birleştirme ----------
+function mergeConflict(p, ls, rs, base) {
+  if (ls === null || rs === null) return ls;
+  if (p.indexOf('stk/') !== 0) return ls;
+  const bp = (base.bp || {})[p]; if (!bp) return ls;
+  let lv, rv; try { lv = JSON.parse(ls); rv = JSON.parse(rs); } catch (e) { return ls; }
+  const m = Object.assign({}, lv);
+  ['s', 'd'].forEach((f, i) => { if (typeof lv[f] === 'number' && typeof rv[f] === 'number' && typeof bp[i] === 'number') m[f] = rv[f] + (lv[f] - bp[i]); });
+  return cval(m);
+}
+function mergePlan(role, L, R, complete, base) {
+  const apply = [], push = [], settle = [];
+  const paths = new Set(Object.keys(L).concat(Object.keys(R), Object.keys(base.map)));
+  paths.forEach(p => {
+    const col = p.split('/')[0];
+    const ls = L[p] === undefined ? null : L[p];
+    const l = ls === null ? null : hs(ls);
+    const b = base.map[p] === undefined ? null : base.map[p];
+    let rs, r;
+    if (p in R) { rs = R[p]; r = rs === null ? null : hs(rs); }
+    else if (complete[col]) { rs = null; r = null; }
+    else { rs = undefined; r = b; }
+    if (l === b && r === b) return;
+    if (l === b) { apply.push({ p: p, s: rs === undefined ? null : rs }); return; }
+    if (r === l) {
+      if (col === 'stk' && ls !== null && base.bp && base.bp[p]) {   // iki telefon aynı sonuca ayrı satışlarla varmış olabilir
+        const ms0 = mergeConflict(p, ls, rs, base);
+        push.push({ p: p, s: ms0, ls: ls }); if (ms0 !== ls) apply.push({ p: p, s: ms0, merged: true });
+        return;
+      }
+      settle.push({ p: p, s: ls }); return;
+    }
+    if (!canPush(p, role)) { apply.push({ p: p, s: rs === undefined ? null : rs }); return; }
+    if (r !== b && rs !== undefined) {
+      const ms = mergeConflict(p, ls, rs, base);
+      push.push({ p: p, s: ms, ls: ls, full: rs === null });
+      if (ms !== ls) apply.push({ p: p, s: ms, merged: true });
+    } else push.push({ p: p, s: ls, ls: ls });
+  });
+  return { apply: apply, push: push, settle: settle };
+}
+function setBase(p, s) {
+  if (cbase.pend) delete cbase.pend[p];
+  if (s === null || s === undefined) { delete cbase.map[p]; delete cbase.bp[p]; return; }
+  cbase.map[p] = hs(s);
+  if (p.indexOf('stk/') === 0) { try { const v = JSON.parse(s); cbase.bp[p] = [typeof v.s === 'number' ? v.s : null, typeof v.d === 'number' ? v.d : null]; } catch (e) {} }
+}
+
+// ---------- uzak değişiklikleri yerele uygula ----------
+function cloudApply(list, role) {
+  const touched = {};
+  let lg = null, hm = null, iv = null; const dm = {};
+  const ord = p => (p.indexOf('products/') === 0 ? 0 : p.indexOf('stk/') === 0 ? 1 : p.indexOf('cost/') === 0 ? 3 : 2);
+  list.sort((a, b) => ord(a.p) - ord(b.p));
+  cs.applying = true;
+  try {
+    list.forEach(it => {
+      const i = it.p.indexOf('/'); const col = i < 0 ? it.p : it.p.slice(0, i); const rest = i < 0 ? '' : it.p.slice(i + 1);
+      const key = dk(rest);
+      const v = it.s === null ? null : JSON.parse(it.s);
+      touched[col] = 1;
+      switch (col) {
+        case 'products':
+          if (v === null) delete products[key];
+          else { const o = products[key] || {}; const n = Object.assign({}, v); ['stock', 'depo', 'cost'].forEach(f => { if (o[f] !== undefined) n[f] = o[f]; }); products[key] = n; }
+          break;
+        case 'stk':
+          if (!products[key]) break;
+          if (v && typeof v.s === 'number') products[key].stock = Math.max(0, v.s); else delete products[key].stock;
+          if (v && typeof v.d === 'number') products[key].depo = Math.max(0, v.d); else delete products[key].depo;
+          break;
+        case 'cost': if (products[key]) { if (v === null) delete products[key].cost; else products[key].cost = v; } break;
+        case 'log': if (!lg) lg = new Map(logs.map(l => [String(l.id), l])); if (v === null) lg.delete(key); else lg.set(key, v); break;
+        case 'debt': {
+          const q = rest.split('/'); const name = dk(q[0]), ek2 = dk(q[1] || '');
+          if (!dm[name]) dm[name] = new Map(debtKeys(asArr(debts[name] || [])));
+          if (v === null) dm[name].delete(ek2); else dm[name].set(ek2, v);
+          break;
+        }
+        case 'cust': if (v === null) delete customers[key]; else customers[key] = v; break;
+        case 'count': if (v === null) delete counts[key]; else counts[key] = v; break;
+        case 'hist': if (!hm) hm = new Map(hist.map(h => [String(h.t), h])); if (v === null) hm.delete(key); else hm.set(key, v); break;
+        case 'inv': if (!iv) iv = new Set(invDone); if (v === null) iv.delete(key); else iv.add(key); break;
+        case 'meta': if (v) meta = v; break;
+      }
+    });
+    Object.keys(dm).forEach(n => { const a = Array.from(dm[n].values()).sort((x, y) => x.t - y.t); if (a.length) debts[n] = a; else delete debts[n]; });
+    if (lg) logs = Array.from(lg.values()).sort((a, b) => (a.t - b.t) || String(a.id).localeCompare(String(b.id)));
+    if (hm) hist = Array.from(hm.values()).sort((a, b) => b.t - a.t);
+    if (iv) invDone = Array.from(iv);
+    if (touched.products || touched.stk || touched.cost) saveProducts();
+    if (touched.log) saveJ('kantin_log', logs);
+    if (touched.debt) saveJ('kantin_debt', debts);
+    if (touched.cust) saveJ('kantin_cust', customers);
+    if (touched.count) saveJ('kantin_count', counts);
+    if (touched.hist) saveJ('kantin_hist', hist);
+    if (touched.inv) saveJ('kantin_inv', invDone);
+    if (touched.meta) saveJ('kantin_meta', meta);
+  } finally { cs.applying = false; }
+  return Object.keys(touched).length > 0;
+}
+
+// ---------- gönder ----------
+async function cloudPush(role, shop, items, okPaths) {
+  const by = {}, tomb = {};
+  cbase.pend = cbase.pend || {};
+  items.forEach(it => { if (it.p.indexOf('stk/') === 0 && it.s !== null) cbase.pend[it.p] = hs(it.s); });
+  saveJ('kantin_cloudbase', cbase);
+  items.forEach(it => {
+    const i = it.p.indexOf('/');
+    if (i < 0) { by['@' + it.p] = { single: true, p: it.p, s: it.s }; return; }
+    const col = it.p.slice(0, i), key = it.p.slice(i + 1);
+    const g = (by[col] = by[col] || { keys: {}, paths: {} });
+    if (col === 'stk' && it.s !== null) {
+      const lv = JSON.parse(it.ls), bp = it.full ? null : (cbase.bp || {})[it.p];
+      if (!bp) g.keys[key] = lv;
+      else ['s', 'd'].forEach((f, n) => {
+        const cur = lv[f], old = bp[n];
+        if (typeof cur === 'number' && typeof old === 'number') { if (cur !== old) g.keys[key + '/' + f] = { '.sv': { increment: cur - old } }; }
+        else if (typeof cur === 'number') g.keys[key + '/' + f] = cur;
+        else if (typeof old === 'number') g.keys[key + '/' + f] = null;
+      });
+      g.paths[key] = it; return;
+    }
+    let val = it.s === null ? null : JSON.parse(it.s);
+    if (col === 'log') {
+      if (val === null) tomb[key] = Date.now(); else val.st = { '.sv': 'timestamp' };
+    }
+    g.keys[key] = val; g.paths[key] = it;
+  });
+  if (Object.keys(tomb).length) { by.logdel = by.logdel || { keys: {}, paths: {} }; Object.keys(tomb).forEach(k => { by.logdel.keys[k] = tomb[k]; }); }
+  for (const name of Object.keys(by)) {
+    const g = by[name];
+    if (g.single) {
+      const r = await dbPut('shops/' + shop + '/' + g.p, g.s === null ? null : JSON.parse(g.s));
+      if (!r.ok) throw r; okPaths.push({ p: g.p, s: g.s }); continue;
+    }
+    const ks = Object.keys(g.keys);
+    for (let i = 0; i < ks.length; i += 250) {
+      const chunk = {}; ks.slice(i, i + 250).forEach(k => { chunk[k] = g.keys[k]; });
+      const r = await dbPatch('shops/' + shop + '/' + name, chunk);
+      if (!r.ok) throw r;
+    }
+    Object.keys(g.paths).forEach(k => okPaths.push({ p: g.paths[k].p, s: g.paths[k].s }));
+  }
+}
+
+// ---------- ilk eşitleme: veri çakışması sorusu ----------
+function askFirst() {
+  return new Promise(resolve => {
+    cs.ask = resolve;
+    openModal('<h3>☁️ Hesapta veri var</h3><p style="font-size:14px;margin:8px 0">Bu telefondaki kantin verileri ile hesabınızdaki veriler farklı. Hangisi kalsın?</p>' +
+      '<button class="btn-primary" id="askRemote">Hesaptaki veriler kalsın<br><span style="font-weight:normal;font-size:12px">Bu telefondakiler yedeğe alınıp silinir</span></button>' +
+      '<button class="btn-danger" id="askLocal">Bu telefondaki veriler kalsın<br><span style="font-weight:normal;font-size:12px">Hesaptaki veriler silinir</span></button>' +
+      '<button class="btn-gray" id="askCancel">Vazgeç</button>');
+    const done = v => { if (!cs.ask) return; cs.ask = null; closeModal(); resolve(v); };
+    $('askRemote').onclick = () => done('remote'); $('askLocal').onclick = () => done('local'); $('askCancel').onclick = () => done('cancel');
+  });
+}
+function cloudStash() {
+  try {
+    const o = {};
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.indexOf('kantin_') === 0 && CLOUD_PRIVATE.indexOf(k) < 0) o[k] = localStorage.getItem(k); }
+    localStorage.setItem('kantin_prelogin', JSON.stringify({ t: Date.now(), data: o }));
+  } catch (e) {}
+}
+function cloudWipe() {
+  cs.applying = true;
+  try {
+    products = {}; saveProducts(); logs = []; saveJ('kantin_log', logs); debts = {}; saveJ('kantin_debt', debts);
+    customers = {}; saveJ('kantin_cust', customers); counts = {}; saveJ('kantin_count', counts); hist = []; saveJ('kantin_hist', hist);
+    invDone = []; saveJ('kantin_inv', invDone); meta = { start: Date.now(), opening: 0, auto: true }; saveJ('kantin_meta', meta);
+    cart = {}; pendingIn = []; delete settings.tpl; delete settings.ownPhone; saveSet();
+  } finally { cs.applying = false; }
+}
+function cloudHasLocal() { return Object.keys(products).length + logs.length + Object.keys(debts).length + Object.keys(customers).length > 0; }
+async function wipeRemote(shop) {
+  for (const c of OWNER_COLS.concat(['log', 'meta'])) { const r = await dbPut('shops/' + shop + '/' + c, null); if (!r.ok) throw r; }
+}
+
+// ---------- eşitleme turu ----------
+function cloudNotify() {
+  if (!cloudSess || cs.applying) return;
+  cs.dirty = true;
+  if (cs.state !== 'offline') cloudState('dirty');
+  clearTimeout(cs.timer); cs.timer = setTimeout(() => cloudSync(), 1500);
+}
+function cloudSync(opts) {
+  if (!cloudSess || !cloudOn()) return Promise.resolve();
+  if (cs.cur) { cs.again = true; return cs.cur; }
+  cs.cur = (async () => {
+    try { await cloudRun(opts || {}); }
+    catch (e) { cloudFail(e); }
+    finally { cs.cur = null; if (cs.again) { cs.again = false; setTimeout(() => cloudSync(), 300); } }
+  })();
+  return cs.cur;
+}
+function cloudFail(e) {
+  if (e && e.net) { cloudState('offline'); return; }
+  if (e && e.auth) { cloudForceLogin(e.msg || 'Oturum süresi doldu. Yeniden giriş yapın.'); return; }
+  cloudState('error', e && e.status !== undefined ? dbErrText(e) : String((e && e.message) || e));
+}
+async function cloudRun(opts) {
+  const role = cloudSess.role, shop = cloudSess.shopId, uid = cloudSess.uid;
+  cloudState('sync');
+  const rr = await dbGet('shops/' + shop + '/rev'); if (!rr.ok) throw rr;
+  const remoteRev = typeof rr.data === 'number' ? rr.data : 0;
+  let first = !cbase || cbase.uid !== uid;
+  let pulled = null;
+  if (first) {
+    pulled = await fetchRemote(role, shop, true);
+    const remoteHas = Object.keys(pulled.R).some(p => /^(products|log|debt|cust)\//.test(p));
+    const foreign = cbase && cbase.uid !== uid;
+    if (role === 'staff' || foreign) { if (cloudHasLocal()) cloudStash(); cloudWipe(); }
+    else if (cloudHasLocal() && remoteHas) {
+      const mode = await askFirst();
+      if (mode === 'cancel') { cloudForceLogin('İlk eşitleme iptal edildi. Verileriniz telefonda duruyor.'); return; }
+      if (mode === 'remote') { cloudStash(); cloudWipe(); }
+      else { await wipeRemote(shop); pulled = { R: {}, complete: { products: true, cost: true, debt: true, cust: true, count: true, hist: true, inv: true, log: true, meta: true }, logSt: 0, tomb: [] }; }
+    }
+    if (role === 'owner' && meta.auto && cloudHasLocal()) lockOpening();
+    cbase = { uid: uid, map: {}, bp: {}, rev: 0, logSt: 0 };
+  }
+  const hasPend = Object.keys(cbase.pend || {}).length > 0;
+  const needPull = opts.force || first || hasPend || cbase.rev !== remoteRev;
+  let R = {}, complete = {}, logSt = cbase.logSt || 0;
+  if (needPull) {
+    const f = pulled || await fetchRemote(role, shop, !!opts.full);
+    R = f.R; complete = f.complete; logSt = f.logSt;
+  }
+  const L = cloudFlatLocal(role);
+  if (needPull && cbase.pend) Object.keys(cbase.pend).forEach(p => { if (p in R && R[p] !== null && hs(R[p]) === cbase.pend[p]) setBase(p, R[p]); });   // yanıtı kaybolan ama sunucuya ulaşan gönderim
+  const plan = mergePlan(role, L, R, complete, cbase);
+  if (cbase.pend) Object.keys(cbase.pend).forEach(p => { if (!plan.push.some(x => x.p === p)) delete cbase.pend[p]; });
+  plan.settle.forEach(x => setBase(x.p, x.s));
+  plan.apply.forEach(x => { if (!x.merged) setBase(x.p, x.s); });
+  const changed = plan.apply.length ? cloudApply(plan.apply.slice(), role) : false;
+  if (needPull) { cbase.logSt = logSt; }
+  saveJ('kantin_cloudbase', cbase);
+  if (changed) cloudRefreshUI();
+  // gönder
+  const okPaths = [];
+  let pushErr = null;
+  if (plan.push.length) {
+    try { await cloudPush(role, shop, plan.push, okPaths); } catch (e) { pushErr = e; }
+    okPaths.forEach(x => setBase(x.p, x.s));
+  }
+  let bumped = okPaths.length > 0 || cbase.nb;
+  if (bumped) {
+    const pr = await dbPut('shops/' + shop + '/rev', { '.sv': { increment: 1 } });
+    if (pr.ok) {
+      cbase.nb = false;
+      const g = await dbGet('shops/' + shop + '/rev');
+      const nr = g.ok && typeof g.data === 'number' ? g.data : -1;
+      cbase.rev = (nr === remoteRev + 1) ? nr : remoteRev;
+      if (nr !== remoteRev + 1) cs.again = true;   // aynı anda başka telefon da yazdı: hemen yeniden çek
+    } else { cbase.nb = true; cbase.rev = remoteRev; if (!pushErr) pushErr = pr; }
+  } else if (needPull) cbase.rev = remoteRev;
+  saveJ('kantin_cloudbase', cbase);
+  if (pushErr) throw pushErr;
+  cs.lastOk = Date.now();
+  cs.dirty = cloudDirtyCount() > 0;
+  cloudState(cs.dirty ? 'dirty' : 'ok');
+  if (cs.dirty) { clearTimeout(cs.timer); cs.timer = setTimeout(() => cloudSync(), 2000); }
+}
+function cloudDirtyCount() {
+  if (!cloudSess || !cbase) return 0;
+  const role = cloudSess.role, L = cloudFlatLocal(role); let n = 0;
+  new Set(Object.keys(L).concat(Object.keys(cbase.map))).forEach(p => {
+    if (!canPush(p, role)) return;
+    const l = L[p] === undefined ? null : hs(L[p]); const b = cbase.map[p] === undefined ? null : cbase.map[p];
+    if (l !== b) n++;
+  });
+  return n;
+}
+function cloudRefreshUI() {
+  checkLowBanner(); checkSktBanner();
+  const ae = document.activeElement, typing = ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName);
+  if (curTab === 'sell') { renderGrid(); renderCart(); renderRecent(); return; }
+  if (typing) return;
+  if (curTab === 'list') renderProductList();
+  else if (curTab === 'summary') renderOverview();
+  else if (curTab === 'count') renderCount();
+  else if (curTab === 'tools') renderTools();
+  else if (curTab === 'msg') renderMsgTab();
+}
+function cloudStart() {
+  clearInterval(cs.poll);
+  cs.poll = setInterval(() => { if (!document.hidden && cloudSess && !cs.cur) cloudSync(); }, POLL_MS);
+  cloudSync();
+}
+
+// ---------- oturum ----------
+function lgMsg(t, type) { const el = $('loginMsg'); el.className = 'msg ' + (type || 'err'); el.textContent = t; }
+function showLogin(msg) {
+  $('loginWrap').classList.remove('hidden');
+  lgMode('login');
+  $('lgPass').value = '';
+  if (msg) lgMsg(msg, 'info'); else $('loginMsg').className = 'msg';
+  $('cfgKey').value = cloudCfg.apiKey || ''; $('cfgUrl').value = cloudCfg.databaseURL || '';
+}
+function lgMode(m) {
+  $('loginForm').classList.toggle('hidden', m !== 'login');
+  $('setupForm').classList.toggle('hidden', m !== 'setup');
+  $('loginSub').textContent = m === 'setup' ? 'Sahip hesabını oluşturun (yalnızca bir kez)' : 'Hesabınızla giriş yapın';
+  $('loginMsg').className = 'msg';
+}
+function cloudForceLogin(msg) {
+  clearInterval(cs.poll); clearTimeout(cs.timer);
+  cloudSess = null; try { localStorage.removeItem('kantin_auth'); } catch (e) {}
+  cloudState('off'); applyRole();
+  showLogin(msg);
+}
+async function resolveRole(sess) {
+  const tmp = cloudSess; cloudSess = sess;
+  try {
+    const o = await dbGet('config/owner');
+    if (!o.ok) return { err: dbErrText(o) };
+    const ownerUid = o.data;
+    if (!ownerUid) return { err: 'Bu sunucuda henüz sahip hesabı yok. Önce "İlk kurulum" ile sahip hesabı oluşturulmalı.' };
+    if (ownerUid === sess.uid) return { role: 'owner', shopId: sess.uid, name: 'Sahip' };
+    const us = await dbGet('userShop/' + sess.uid);
+    if (!us.ok) return { err: dbErrText(us) };
+    if (us.data !== ownerUid) return { err: 'Bu hesap bir kantine bağlı değil. Sahip sizi çalışan olarak eklemeli.' };
+    const st = await dbGet('shops/' + ownerUid + '/staff/' + sess.uid);
+    if (!st.ok) return { err: dbErrText(st) };
+    if (!st.data) return { err: 'Erişiminiz kaldırılmış. Sahiple görüşün.' };
+    return { role: 'staff', shopId: ownerUid, name: st.data.name || '' };
+  } finally { cloudSess = tmp; }
+}
+function sessFrom(r, email) {
+  return { uid: r.data.localId, email: email, idToken: r.data.idToken, refreshToken: r.data.refreshToken, exp: Date.now() + (parseInt(r.data.expiresIn, 10) || 3600) * 1000 };
+}
+async function enterApp(sess, ro) {
+  sess.role = ro.role; sess.shopId = ro.shopId; sess.name = ro.name;
+  cloudSess = sess; saveJ('kantin_auth', sess);
+  $('loginWrap').classList.add('hidden'); $('lgPass').value = ''; $('lgPass2').value = '';
+  applyRole(); showTab('sell');
+  cloudStart();
+}
+async function doLogin() {
+  const raw = $('lgUser').value.trim().toLowerCase(), pw = $('lgPass').value;
+  if (!raw || !pw) { lgMsg('Kullanıcı adı ve şifreyi girin.'); return; }
+  const email = raw.indexOf('@') >= 0 ? raw : raw + STAFF_DOMAIN;
+  $('lgBtn').disabled = true; lgMsg('Giriş yapılıyor…', 'info');
+  try {
+    const r = await authCall('signInWithPassword', { email: email, password: pw, returnSecureToken: true });
+    if (!r.ok) { lgMsg(authErrText(r)); return; }
+    const sess = sessFrom(r, email);
+    const ro = await resolveRole(sess);
+    if (ro.err) { lgMsg(ro.err); return; }
+    await enterApp(sess, ro);
+  } finally { $('lgBtn').disabled = false; }
+}
+async function doSetup() {
+  const email = $('suEmail').value.trim().toLowerCase(), pw = $('lgPass2').value, pw2 = $('suPass2').value;
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) { lgMsg('Geçerli bir e-posta adresi girin (şifre sıfırlama için gerekli).'); return; }
+  if (pw.length < 6) { lgMsg('Şifre en az 6 karakter olmalı.'); return; }
+  if (pw !== pw2) { lgMsg('Şifreler aynı değil.'); return; }
+  $('suBtn').disabled = true; lgMsg('Hesap oluşturuluyor…', 'info');
+  try {
+    const r = await authCall('signUp', { email: email, password: pw, returnSecureToken: true });
+    if (!r.ok) { lgMsg(authErrText(r)); return; }
+    const sess = sessFrom(r, email);
+    const tmp = cloudSess; cloudSess = sess;
+    try {
+      const o = await dbGet('config/owner');
+      if (!o.ok) { lgMsg(dbErrText(o)); return; }
+      if (o.data && o.data !== sess.uid) {
+        await authCall('delete', { idToken: sess.idToken });
+        lgMsg('Bu sunucuda sahip hesabı zaten oluşturulmuş. Giriş yapın.'); return;
+      }
+      if (!o.data) { const w = await dbPut('config/owner', sess.uid); if (!w.ok) { lgMsg(dbErrText(w)); return; } }
+      const w2 = await dbPut('userShop/' + sess.uid, sess.uid);
+      if (!w2.ok && w2.status !== 401) { lgMsg(dbErrText(w2)); return; }
+    } finally { cloudSess = tmp; }
+    if (!Object.keys(products).length) importSeed(true);
+    await enterApp(sess, { role: 'owner', shopId: sess.uid, name: 'Sahip' });
+  } finally { $('suBtn').disabled = false; }
+}
+async function lgForgot() {
+  const raw = $('lgUser').value.trim().toLowerCase();
+  if (raw.indexOf('@') < 0) { lgMsg('Şifre sıfırlama yalnızca sahip hesabı (e-posta) için çalışır. E-posta adresinizi kullanıcı adı kutusuna yazın.'); return; }
+  const r = await authCall('sendOobCode', { requestType: 'PASSWORD_RESET', email: raw });
+  if (!r.ok) { lgMsg(authErrText(r)); return; }
+  lgMsg('Sıfırlama bağlantısı e-postanıza gönderildi (spam klasörüne de bakın).', 'ok');
+}
+function saveCfg() {
+  const k = $('cfgKey').value.trim(), u = $('cfgUrl').value.trim();
+  if (!k || !/^https:\/\/[^\s]+$/.test(u)) { lgMsg('API anahtarı ve https:// ile başlayan veritabanı adresi gerekli.'); return; }
+  const keep = { authBase: cloudCfg.authBase, tokenBase: cloudCfg.tokenBase };
+  cloudCfg = Object.assign({}, CLOUD_DEFAULT, keep, { apiKey: k, databaseURL: u.replace(/\/+$/, '') });
+  saveJ('kantin_cloudcfg', cloudCfg);
+  lgMsg('Kaydedildi.', 'ok');
+}
+function saveCfgAc() {
+  const k = $('acKey').value.trim(), u = $('acUrl').value.trim();
+  if (!k || !/^https:\/\/[^\s]+$/.test(u)) { showMsg('ac', 'API anahtarı ve https:// ile başlayan veritabanı adresi gerekli.', 'err'); return; }
+  const keep = { authBase: cloudCfg.authBase, tokenBase: cloudCfg.tokenBase };
+  cloudCfg = Object.assign({}, CLOUD_DEFAULT, keep, { apiKey: k, databaseURL: u.replace(/\/+$/, '') });
+  saveJ('kantin_cloudcfg', cloudCfg);
+  showMsg('ac', 'Kaydedildi.', 'ok'); renderAccount(); if (!cloudSess) showLogin();
+}
+async function cloudLogout() {
+  if (!cloudSess) return;
+  if (!confirm('Çıkış yapılırsa bu telefondaki kantin verileri silinir (hesabınızdaki veriler durur). Devam edilsin mi?')) return;
+  showMsg('ac', 'Son değişiklikler gönderiliyor…', 'info', 30000);
+  try { await cloudSync(); await cloudSync({ force: true }); } catch (e) {}
+  const n = cloudDirtyCount();
+  if (n > 0 && !confirm(n + ' değişiklik sunucuya gönderilemedi (internet yok olabilir). Şimdi çıkarsanız kaybolur. Yine de çıkılsın mı?')) { showMsg('ac', 'Çıkış iptal edildi.', 'info'); return; }
+  clearInterval(cs.poll); clearTimeout(cs.timer);
+  cloudWipe();
+  cloudSess = null; cbase = null;
+  try { localStorage.removeItem('kantin_auth'); localStorage.removeItem('kantin_cloudbase'); } catch (e) {}
+  cloudState('off'); applyRole(); renderGrid(); renderCart(); showTab('sell');
+  showLogin('Çıkış yapıldı.');
+}
+
+// ---------- rol bazlı arayüz ----------
+function applyRole() {
+  const staff = isStaff();
+  ['tabStockin', 'tabCount', 'tabSummary', 'tabMore'].forEach(id => $(id).classList.toggle('hidden', staff));
+  $('tabAccount').classList.toggle('hidden', !staff);
+  document.querySelectorAll('.ownerOnly').forEach(e => e.classList.toggle('hidden', staff));
+  try { renderDayLine(); } catch (e) {}
+  if (staff) { $('lowBanner').classList.add('hidden'); $('sktBanner').classList.add('hidden'); }
+}
+
+// ---------- Hesap sekmesi ----------
+function renderAccount() {
+  const on = cloudOn(), s = cloudSess;
+  $('acNoCloud').classList.toggle('hidden', on);
+  $('acStatus').classList.toggle('hidden', !on || !s);
+  $('acPwCard').classList.toggle('hidden', !on || !s);
+  $('acStaffCard').classList.toggle('hidden', !on || !s || s.role !== 'owner');
+  $('acVer').textContent = 'Sürüm: hesaplı-12 · sunucu: ' + (on ? 'ayarlı' : 'ayarsız') + ' · oturum: ' + (s ? 'açık' : 'kapalı');
+  $('acKey').value = cloudCfg.apiKey || ''; $('acUrl').value = cloudCfg.databaseURL || '';
+  $('acCfgCard').classList.toggle('hidden', !!(s && s.role === 'staff'));
+  $('acRules').value = FB_RULES;
+  if (on && s) {
+    const b = $('acBody'); b.innerHTML = '';
+    addRow(b, 'Hesap', (s.role === 'owner' ? 'Sahip · ' : 'Çalışan · ') + (s.role === 'owner' ? s.email : (s.name || s.email.split('@')[0])));
+    addRow(b, 'Durum', { ok: 'Eşitlendi', sync: 'Eşitleniyor…', dirty: 'Gönderilecek değişiklik var', offline: 'Çevrimdışı', error: 'Hata: ' + cs.err }[cs.state] || '—');
+    addRow(b, 'Son eşitleme', cs.lastOk ? new Date(cs.lastOk).toLocaleString('tr-TR') : '—');
+    if (s.role === 'owner') renderStaff();
+  }
+}
+async function renderStaff() {
+  const box = $('stList'); const r = await dbGet('shops/' + cloudSess.shopId + '/staff');
+  box.innerHTML = '';
+  if (!r.ok) { box.textContent = 'Liste alınamadı: ' + dbErrText(r); return; }
+  const rows = oe(r.data);
+  if (!rows.length) { const p = document.createElement('p'); p.className = 'empty'; p.textContent = 'Henüz çalışan hesabı yok.'; box.appendChild(p); return; }
+  const t = document.createElement('table'), tb = document.createElement('tbody');
+  rows.forEach(([uid, v]) => {
+    const tr = document.createElement('tr');
+    const a = document.createElement('td'); const n = document.createElement('div'); n.textContent = v.name || v.username;
+    const c = document.createElement('div'); c.className = 'code'; c.textContent = 'Kullanıcı adı: ' + (v.username || '?'); a.appendChild(n); a.appendChild(c);
+    const b = document.createElement('td'); b.className = 'actions';
+    b.appendChild(mkBtn('Kaldır', 'btn-danger', () => staffRemove(uid, v.name || v.username)));
+    tr.appendChild(a); tr.appendChild(b); tb.appendChild(tr);
+  });
+  t.appendChild(tb); box.appendChild(t);
+}
+async function staffAdd() {
+  const name = $('stName').value.trim(), un = $('stUser').value.trim().toLowerCase(), pw = $('stPass').value;
+  if (!name) { showMsg('ac', 'Çalışanın adını yazın.', 'err'); return; }
+  if (!/^[a-z0-9._-]{3,24}$/.test(un)) { showMsg('ac', 'Kullanıcı adı 3-24 karakter olmalı; yalnızca a-z, rakam, nokta, tire, alt çizgi (Türkçe harf kullanmayın).', 'err', 6000); return; }
+  if (pw.length < 6) { showMsg('ac', 'Şifre en az 6 karakter olmalı.', 'err'); return; }
+  const email = un + STAFF_DOMAIN;
+  let r = await authCall('signUp', { email: email, password: pw, returnSecureToken: true });
+  let uid;
+  if (r.ok) uid = r.data.localId;
+  else if (/EMAIL_EXISTS/.test(JSON.stringify(r.data))) {
+    const s = await authCall('signInWithPassword', { email: email, password: pw, returnSecureToken: true });
+    if (!s.ok) { showMsg('ac', 'Bu kullanıcı adı daha önce kullanılmış. Başka bir kullanıcı adı seçin ya da eski şifreyi girin.', 'err', 7000); return; }
+    uid = s.data.localId;
+  } else { showMsg('ac', authErrText(r), 'err'); return; }
+  const w1 = await dbPut('userShop/' + uid, cloudSess.uid);
+  if (!w1.ok && w1.status !== 401) { showMsg('ac', dbErrText(w1), 'err'); return; }
+  const w2 = await dbPut('shops/' + cloudSess.shopId + '/staff/' + uid, { name: name, username: un, t: Date.now() });
+  if (!w2.ok) { showMsg('ac', dbErrText(w2), 'err'); return; }
+  $('stName').value = ''; $('stUser').value = ''; $('stPass').value = '';
+  showMsg('ac', '✅ ' + name + ' eklendi. Kullanıcı adı: ' + un, 'ok', 6000);
+  renderStaff();
+}
+async function staffRemove(uid, name) {
+  if (!confirm(name + ' hesabının erişimi kapatılsın mı?')) return;
+  const r = await dbPut('shops/' + cloudSess.shopId + '/staff/' + uid, null);
+  if (!r.ok) { showMsg('ac', dbErrText(r), 'err'); return; }
+  showMsg('ac', 'Erişim kapatıldı.', 'ok'); renderStaff();
+}
+async function cloudChangePw() {
+  const cur = $('pwCur').value, nw = $('pwNew').value;
+  if (!cur || nw.length < 6) { showMsg('ac', 'Mevcut şifreyi ve en az 6 karakterli yeni şifreyi girin.', 'err'); return; }
+  const s = await authCall('signInWithPassword', { email: cloudSess.email, password: cur, returnSecureToken: true });
+  if (!s.ok) { showMsg('ac', 'Mevcut şifre hatalı.', 'err'); return; }
+  const u = await authCall('update', { idToken: s.data.idToken, password: nw, returnSecureToken: true });
+  if (!u.ok) { showMsg('ac', authErrText(u), 'err'); return; }
+  cloudSess.idToken = u.data.idToken; cloudSess.refreshToken = u.data.refreshToken;
+  cloudSess.exp = Date.now() + (parseInt(u.data.expiresIn, 10) || 3600) * 1000; saveJ('kantin_auth', cloudSess);
+  $('pwCur').value = ''; $('pwNew').value = '';
+  showMsg('ac', '✅ Şifre değiştirildi. Diğer telefonlarda yeni şifreyle giriş yapmanız gerekebilir.', 'ok', 6000);
+}
+function copyRules() { copyText(FB_RULES, 'ac'); }
+function showPrelogin() {
+  let o = null; try { o = JSON.parse(localStorage.getItem('kantin_prelogin')); } catch (e) {}
+  if (!o) { showMsg('ac', 'Giriş öncesi yedek yok.', 'info'); return; }
+  download('kantin-giris-oncesi-yedek.json', JSON.stringify(o.data), 'application/json');
+  showMsg('ac', 'Giriş öncesi yedek indirildi (Araçlar > Yedekleme ile geri yüklenebilir).', 'ok', 6000);
+}
+
+
+const FB_RULES = "{\n  \"rules\": {\n    \"config\": {\n      \"owner\": {\n        \".read\": \"auth != null\",\n        \".write\": \"auth != null && !data.exists() && newData.val() === auth.uid\"\n      }\n    },\n    \"userShop\": {\n      \"$uid\": {\n        \".read\": \"auth != null && auth.uid === $uid\",\n        \".write\": \"auth != null && !data.exists() && root.child('config/owner').val() === auth.uid && newData.val() === auth.uid\"\n      }\n    },\n    \"shops\": {\n      \"$shop\": {\n        \".read\": \"auth != null && auth.uid === $shop && root.child('config/owner').val() === $shop\",\n        \".write\": \"auth != null && auth.uid === $shop && root.child('config/owner').val() === $shop\",\n        \"staff\": {\n          \"$uid\": {\n            \".read\": \"auth != null && auth.uid === $uid\"\n          }\n        },\n        \"rev\": {\n          \".read\": \"auth != null && root.child('config/owner').val() === $shop && (auth.uid === $shop || root.child('shops/' + $shop + '/staff/' + auth.uid).exists())\",\n          \".write\": \"auth != null && root.child('config/owner').val() === $shop && (auth.uid === $shop || root.child('shops/' + $shop + '/staff/' + auth.uid).exists())\"\n        },\n        \"products\": {\n          \".read\": \"auth != null && root.child('config/owner').val() === $shop && (auth.uid === $shop || root.child('shops/' + $shop + '/staff/' + auth.uid).exists())\",\n          \".write\": \"auth != null && root.child('config/owner').val() === $shop && (auth.uid === $shop || root.child('shops/' + $shop + '/staff/' + auth.uid).exists())\"\n        },\n        \"stk\": {\n          \".read\": \"auth != null && root.child('config/owner').val() === $shop && (auth.uid === $shop || root.child('shops/' + $shop + '/staff/' + auth.uid).exists())\",\n          \".write\": \"auth != null && root.child('config/owner').val() === $shop && (auth.uid === $shop || root.child('shops/' + $shop + '/staff/' + auth.uid).exists())\"\n        },\n        \"log\": {\n          \".read\": \"auth != null && root.child('config/owner').val() === $shop && (auth.uid === $shop || root.child('shops/' + $shop + '/staff/' + auth.uid).exists())\",\n          \".write\": \"auth != null && root.child('config/owner').val() === $shop && (auth.uid === $shop || root.child('shops/' + $shop + '/staff/' + auth.uid).exists())\",\n          \".indexOn\": [\n            \"st\"\n          ]\n        },\n        \"logdel\": {\n          \".read\": \"auth != null && root.child('config/owner').val() === $shop && (auth.uid === $shop || root.child('shops/' + $shop + '/staff/' + auth.uid).exists())\",\n          \".write\": \"auth != null && root.child('config/owner').val() === $shop && (auth.uid === $shop || root.child('shops/' + $shop + '/staff/' + auth.uid).exists())\"\n        },\n        \"debt\": {\n          \".read\": \"auth != null && root.child('config/owner').val() === $shop && (auth.uid === $shop || root.child('shops/' + $shop + '/staff/' + auth.uid).exists())\",\n          \".write\": \"auth != null && root.child('config/owner').val() === $shop && (auth.uid === $shop || root.child('shops/' + $shop + '/staff/' + auth.uid).exists())\"\n        },\n        \"cust\": {\n          \".read\": \"auth != null && root.child('config/owner').val() === $shop && (auth.uid === $shop || root.child('shops/' + $shop + '/staff/' + auth.uid).exists())\"\n        }\n      }\n    }\n  }\n}";
+
+function cloudInit() {
+  if (!cloudOn() && !Object.keys(products).length) importSeed(true);
+  applyRole();
+  try { new IntersectionObserver(es => { cartVisible = es[0].isIntersecting; updSticky(); }).observe($('cartCard')); } catch (e) {}
+  $('lgPass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+  $('lgUser').addEventListener('keydown', e => { if (e.key === 'Enter') $('lgPass').focus(); });
+  $('suPass2').addEventListener('keydown', e => { if (e.key === 'Enter') doSetup(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && cloudSess) cloudSync(); });
+  window.addEventListener('online', () => { if (cloudSess) cloudSync(); });
+  window.addEventListener('offline', () => { if (cloudSess) cloudState('offline'); });
+  if (!cloudOn()) { cloudState('off'); return; }
+  if (cloudSess && cloudSess.uid && cloudSess.refreshToken && cloudSess.shopId) { applyRole(); cloudStart(); }
+  else { cloudSess = null; showLogin(); }
+}
+
+function skipLogin() { $('loginWrap').classList.add('hidden'); }
+
+// ===== PWA (ana ekrana ekleme desteği) =====
+try {
+  if ('serviceWorker' in navigator && /^https?:/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(() => {});
+} catch (e) {}
+try {
+  const iconSvg = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#1a3c6e"/><text x="50" y="68" font-size="52" text-anchor="middle">🏪</text></svg>');
+  const man = { name: 'Kantin Satış', short_name: 'Kantin', display: 'standalone', background_color: '#1a3c6e', theme_color: '#1a3c6e', start_url: '.', icons: [{ src: iconSvg, sizes: 'any', type: 'image/svg+xml', purpose: 'any' }] };
+  $('pwaManifest').href = 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify(man));
+} catch (e) {}
+
+// ===== Başlangıç =====
+applyDark();
+document.getElementById('modeP1').classList.toggle('active', settings.priceMode === 'p1');
+document.getElementById('modeP2').classList.toggle('active', settings.priceMode === 'p2');
+renderGrid();
+renderCart();
+renderRecent();
+checkLowBanner();
+checkSktBanner();
+checkBkBanner();
+fillDebtNames();
+cloudInit();
+</script>
+</body>
+</html>
