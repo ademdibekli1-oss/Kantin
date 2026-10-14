@@ -1,7 +1,7 @@
 {
   "name": "Kantin Satış",
   "short_name": "Kantin",
-  "id": "/kantin-satis-app",
+  "id": "/kantin-satis-app", 
   "description": "Kantin satış ve veresiye takip uygulaması",
   "start_url": "./",
   "scope": "./",
